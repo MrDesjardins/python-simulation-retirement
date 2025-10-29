@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from common import run_simulation
 
 simulation_data = run_simulation()
@@ -43,6 +44,9 @@ tick_labels = ["≤ $0"] + [f"${int(x/1_000_000)}M" if x >= 1_000_000 else f"${x
 plt.xticks(tick_positions, tick_labels, rotation=30, ha='right', fontsize=10)
 
 plt.yscale("log")
+ax = plt.gca()
+ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0, subs=None, numticks=10))
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: f"{int(y):,}"))
 plt.legend()
 plt.tight_layout()
 plt.show()

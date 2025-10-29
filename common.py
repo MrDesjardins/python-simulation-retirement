@@ -34,7 +34,7 @@ class SimulationData:
 
 
 def run_simulation(
-    n_sims=50_000, n_years=40, initial_balance=5_000_000, withdrawal=100_000
+    n_sims=1_000_000, n_years=25, initial_balance=2_000_000, withdrawal=50_000
 ):
     """
     Load the data from the Excel file and run the simulations.
