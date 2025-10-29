@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-
+import time
 
 class SimulationData:
     def __init__(
@@ -39,34 +39,33 @@ def run_simulation(
     """
     Load the data from the Excel file and run the simulations.
     """
+    start_time = time.time()
     file_path = "data/ie_data.xls"
-    # Skip the header
     df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
-
-    # We'll keep Date (col 0) and column Real Total Return Price (col 9)
     df = df.iloc[:, [0, 9]]
-    df.columns = ["Date", "Real Total Return Price"]  # Rename for clarity
+    df.columns = ["Date", "Real Total Return Price"]
     df = df.dropna()
     df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
-    # Take the last (december)
     annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
     returns = annual.pct_change().dropna().to_numpy()
 
-    final_balances = []
+    # Pre-generate all shuffled returns for all simulations
+    idx = np.arange(len(returns))
+    shuffled_idx = np.array([np.random.permutation(idx)[:n_years] for _ in range(n_sims)])
+    sim_returns = returns[shuffled_idx]  # shape: (n_sims, n_years)
+
+    # Initialize trajectories
     trajectories = np.zeros((n_sims, n_years + 1))
-    trajectories[:, 0] = initial_balance  # starting balance
+    trajectories[:, 0] = initial_balance
 
-    for i in range(n_sims):
-        balance = initial_balance
-        shuffled_returns = np.random.permutation(returns)
-        for t, r in enumerate(shuffled_returns[:n_years]):
-            balance = (balance - withdrawal) * (1 + r)
-            if balance <= 0:
-                balance = 0
-            trajectories[i, t + 1] = balance
-        final_balances.append(balance)
-
-    final_balances = np.array(final_balances)
+    # Vectorized simulation
+    balances = np.full(n_sims, initial_balance, dtype=np.float64)
+    for t in range(n_years):
+        balances = (balances - withdrawal) * (1 + sim_returns[:, t])
+        balances = np.maximum(balances, 0)  # floor at 0
+        trajectories[:, t + 1] = balances
+    end_time = time.time()
+    print(f"Simulation of {n_sims} runs over {n_years} years took {end_time - start_time:.2f} seconds.")
     return SimulationData(
-        initial_balance, withdrawal, n_years, n_sims, final_balances, trajectories
+        initial_balance, withdrawal, n_years, n_sims, balances, trajectories
     )
