@@ -1,0 +1,13 @@
+[project]
+name = "python-simulation-retirement"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.10.7",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "pandas-stubs>=2.3.2.250926",
+    "xlrd>=2.0.2",
+]
