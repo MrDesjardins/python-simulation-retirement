@@ -78,6 +78,31 @@ class SimulationData:
         print(
             f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
         )
+        # Compute year-over-year changes
+        yearly_change = self.trajectories[:, 1:] - self.trajectories[:, :-1]
+
+        # Boolean array: True if negative change (loss)
+        loss_years = yearly_change < 0
+        # Sliding window of length along years
+        window_size = 5
+        windows = np.lib.stride_tricks.sliding_window_view(
+            loss_years, window_size, axis=1
+        )
+
+        consecutive_year_lost = np.all(windows, axis=2)  # shape: (n_sims, n_years - 3)
+
+        sim_with_year_neg = np.any(consecutive_year_lost, axis=1)
+
+        print(
+            f"{np.sum(sim_with_year_neg)} simulations ({np.sum(sim_with_year_neg) / len(sim_with_year_neg):.1%}) had {window_size} or more consecutive negative years."
+        )
+        frac_loss = np.sum(loss_years, axis=1) / loss_years.shape[1]
+
+        sim_more_than_50pct_loss = frac_loss > 0.5
+
+        print(
+            f"{np.sum(sim_more_than_50pct_loss)} simulations ({np.sum(sim_more_than_50pct_loss) / len(sim_more_than_50pct_loss):.1%}) had more than 50% negative years."
+        )
 
 
 # global to be set in initializer
@@ -157,12 +182,12 @@ def _simulate_chunk(args):
 
 
 def run_simulation_mp(
-    n_sims=10_000_000,
-    n_years=40,
+    n_sims=1_000_000,
+    n_years=45,
     initial_balance=6_000_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=75_000,
-    go_back_year=4,
+    withdrawal=120_000,
+    withdrawal_negative_year=40_000,
+    go_back_year=0,
     n_workers=None,
     return_trajectories=False,
     chunk_size=None,
@@ -252,10 +277,10 @@ def run_simulation_mp(
 
 
 def run_simulation_historical_real(
-    n_years=40,
-    initial_balance=6_000_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=70_000,
+    n_years=45,
+    initial_balance=4_800_000,
+    withdrawal=120_000,
+    withdrawal_negative_year=80_000,
     go_back_year=0,
     return_trajectories=False,
 ):

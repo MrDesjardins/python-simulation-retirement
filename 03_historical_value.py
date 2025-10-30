@@ -13,7 +13,7 @@ plt.figure(figsize=(20, 10))
 
 for sim in range(n_sims):
     color = "red" if trajectories[sim, -1] <= 0 else "blue"
-    alpha = 0.5 if color == "red" else 0.2
+    alpha = 0.5 if color == "red" else 0.1
     plt.plot(range(n_years + 1), trajectories[sim], color=color, alpha=alpha)
 
 median_trajectory = np.median(trajectories, axis=0)

@@ -5,6 +5,7 @@ from common import run_simulation_mp
 
 simulation_data = run_simulation_mp(return_trajectories=True)
 simulation_data.print_stats()
+exit()
 trajectories = simulation_data.trajectories
 n_sims = simulation_data.n_sims
 n_years = simulation_data.n_years
