@@ -11,11 +11,11 @@ n_years = simulation_data.n_years
 plt.figure(figsize=(20, 10))
 
 # Choose only random simulations to plot for clarity
-selected_indices = np.random.choice(n_sims, size=10000, replace=False)
+selected_indices = np.random.choice(n_sims, size=50_000, replace=False)
 for sim in selected_indices:
     # Red if ending balance <= 0, otherwise blue
     color = "red" if trajectories[sim, -1] <= 0 else "blue"
-    alpha = 0.5 if color == "red" else 0.03
+    alpha = 0.1 if color == "red" else 0.01
     plt.plot(range(n_years + 1), trajectories[sim], color=color, alpha=alpha)
 
 
@@ -28,7 +28,7 @@ plt.legend()
 p10 = np.percentile(trajectories, 10, axis=0)
 p90 = np.percentile(trajectories, 90, axis=0)
 plt.fill_between(
-    range(n_years + 1), p10, p90, color="gray", alpha=0.5, label="10–90th percentile"
+    range(n_years + 1), p10, p90, color="gray", alpha=0.3, label="10–90th percentile"
 )
 
 

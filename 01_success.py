@@ -10,17 +10,13 @@ final_balances = simulation_data.final_balances
 n_sims = simulation_data.n_sims
 n_years = simulation_data.n_years
 
-cap = 40_000_000
+cap = 60_000_000
 bin_width = 1_000_000
 
 # Separate the three categories
 underflow = final_balances[final_balances <= 0]
 normal = final_balances[(final_balances > 0) & (final_balances <= cap)]
 overflow = final_balances[final_balances > cap]
-
-print(f"{len(underflow):,} simulations ended ≤ $0.")
-print(f"{len(normal):,} simulations between $0 and $40M.")
-print(f"{len(overflow):,} simulations ended > $40M.")
 
 # Define bins up to $40M
 bins = np.arange(0, cap + bin_width, bin_width)
@@ -34,9 +30,9 @@ if len(underflow) > 0:
     plt.bar(-bin_width/2, len(underflow), width=bin_width, color='gray', edgecolor='black', label="≤ $0")
 
 if len(overflow) > 0:
-    plt.bar(cap + bin_width/2, len(overflow), width=bin_width, color='red', edgecolor='black', label="20M+")
+    plt.bar(cap + bin_width/2, len(overflow), width=bin_width, color='red', edgecolor='black', label="40M+")
 
-plt.title(f"Monte Carlo Results ({n_sims} runs, {n_years} years)")
+plt.title(f"Monte Carlo Results ({n_sims:,} runs, {n_years} years)")
 plt.xlabel("Ending Balance ($)")
 plt.ylabel("Frequency")
 jump = 4

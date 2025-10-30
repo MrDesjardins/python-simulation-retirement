@@ -9,6 +9,7 @@ class SimulationData:
         self,
         initial_balance,
         withdrawal,
+        withdrawal_negative_year,
         n_years,
         n_sims,
         final_balances,
@@ -18,6 +19,7 @@ class SimulationData:
     ):
         self.initial_balance = initial_balance
         self.withdrawal = withdrawal
+        self.withdrawal_negative_year = withdrawal_negative_year
         self.n_years = n_years
         self.n_sims = n_sims
         self.final_balances = final_balances
@@ -55,9 +57,16 @@ class SimulationData:
         print("Return distribution over historical years:")
         print(binned.value_counts().sort_index())
         print(
-            f"Probability portfolio survives {self.n_years} years: {prob_success:.1%}"
+            f"\nProbability portfolio survives {self.n_years} years: {prob_success:.1%} if withdrawing ${self.withdrawal:,.0f} per year and in negative years ${self.withdrawal_negative_year:,.0f} per year."
         )
-        print(f"Median ending balance: ${median_final:,.0f}")
+
+        # Separate the three categories
+        underflow = self.final_balances[self.final_balances <= 0]
+        overflow = self.final_balances[self.final_balances > 0]
+        print(f"{len(underflow):,} simulations ended ≤ $0.")
+        print(f"{len(overflow):,} simulations ended > $0.")
+
+        print(f"\nMedian ending balance: ${median_final:,.0f}")
         print(
             "10th, 25th, 75th, 90th percentile outcomes:",
             [f"${p:,.0f}" for p in percentiles],
@@ -74,14 +83,25 @@ _RETURNS = None
 _N_YEARS = None
 _INITIAL_BALANCE = None
 _WITHDRAWAL = None
+_WITHDRAWAL_NEGATIVE_YEAR = None
+_GO_BACK_YEARS = None
 
 
-def _init_worker(returns, n_years, initial_balance, withdrawal):
-    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL
+def _init_worker(
+    returns,
+    n_years,
+    initial_balance,
+    withdrawal,
+    withdrawal_negative_year,
+    go_back_year,
+):
+    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS
     _RETURNS = returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
     _WITHDRAWAL = withdrawal
+    _WITHDRAWAL_NEGATIVE_YEAR = withdrawal_negative_year
+    _GO_BACK_YEARS = go_back_year
 
 
 def _simulate_chunk(args):
@@ -111,10 +131,22 @@ def _simulate_chunk(args):
     inflation_rate = 0.03
     # Vectorized year loop (fast: operates on arrays of size chunk_size)
     for t in range(_N_YEARS):
-        balances = (balances - _WITHDRAWAL * ((1 + inflation_rate) ** t)) * (
-            1.0 + sim_returns[:, t]
+        withdrawals = np.where(
+            sim_returns[:, t] >= 0, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR
         )
-        # floor at zero:
+        # Apply inflation
+        withdrawals = withdrawals * ((1 + inflation_rate) ** t)
+
+        # Update balances
+        balances = (balances - withdrawals) * (1.0 + sim_returns[:, t])
+
+        # In the case the balance goes under the initial money in the first 5 years, we
+        # go back to work to get back to the initial balance
+        if t < _GO_BACK_YEARS:
+            need_to_work_scenario = balances < _INITIAL_BALANCE
+            balances[need_to_work_scenario] = _INITIAL_BALANCE
+
+        # Apply a floor at zero:
         np.maximum(balances, 0.0, out=balances)
         if return_traj:
             trajectories[:, t + 1] = balances
@@ -123,10 +155,12 @@ def _simulate_chunk(args):
 
 
 def run_simulation_mp(
-    n_sims=1_000_000,
-    n_years=45,
+    n_sims=10_000_000,
+    n_years=40,
     initial_balance=6_000_000,
-    withdrawal=70_000,
+    withdrawal=100_000,
+    withdrawal_negative_year=75_000,
+    go_back_year=4,
     n_workers=None,
     return_trajectories=False,
     chunk_size=None,
@@ -166,7 +200,14 @@ def run_simulation_mp(
     with Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(returns, n_years, initial_balance, withdrawal),
+        initargs=(
+            returns,
+            n_years,
+            initial_balance,
+            withdrawal,
+            withdrawal_negative_year,
+            go_back_year,
+        ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
 
@@ -198,6 +239,7 @@ def run_simulation_mp(
     return SimulationData(
         initial_balance,
         withdrawal,
+        withdrawal_negative_year,
         n_years,
         n_sims,
         final_balances,
