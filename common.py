@@ -52,7 +52,9 @@ class SimulationData:
             "20% +",
         ]
         binned = pd.cut(self.returns_by_year, bins=bins, labels=labels)
-
+        print(
+            f"The simulation starts using a portfolio balance of ${self.initial_balance:,.0f}."
+        )
         print(f"There is {self.total_years} years of historical return data.")
         print("Return distribution over historical years:")
         print(binned.value_counts().sort_index())
@@ -236,6 +238,96 @@ def run_simulation_mp(
         f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds."
     )
     # Return a simple object (adapt to your SimulationData)
+    return SimulationData(
+        initial_balance,
+        withdrawal,
+        withdrawal_negative_year,
+        n_years,
+        n_sims,
+        final_balances,
+        trajectories,
+        total_years,
+        returns_by_year=returns,
+    )
+
+
+def run_simulation_historical_real(
+    n_years=40,
+    initial_balance=6_000_000,
+    withdrawal=100_000,
+    withdrawal_negative_year=70_000,
+    go_back_year=0,
+    return_trajectories=False,
+):
+    start_time = time.time()
+
+    # --- Load and prepare historical data ---
+    file_path = "data/ie_data.xls"
+    df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
+    df = df.iloc[:, [0, 9]]
+    df.columns = ["Date", "Real Total Return Price"]
+    df = df.dropna()
+    df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
+
+    annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
+    returns = annual.pct_change().dropna().to_numpy()
+    total_years = len(returns)
+
+    # --- Setup rolling window simulations ---
+    n_sims = total_years - n_years + 1
+    start_indices = np.arange(n_sims)
+
+    final_balances = np.zeros(n_sims, dtype=np.float64)
+    trajectories = (
+        np.zeros((n_sims, n_years + 1), dtype=np.float64)
+        if return_trajectories
+        else None
+    )
+
+    inflation_rate = 0.03
+
+    # --- Run each simulation sequentially ---
+    for i, start in enumerate(start_indices):
+        sim_returns = returns[start : start + n_years]
+        balance = float(initial_balance)
+
+        if return_trajectories:
+            trajectories[i, 0] = balance
+
+        for t in range(n_years):
+            withdrawal_t = (
+                withdrawal if sim_returns[t] >= 0 else withdrawal_negative_year
+            )
+            withdrawal_t = float(withdrawal_t) * ((1 + inflation_rate) ** t)
+            balance = (balance - withdrawal_t) * (1.0 + sim_returns[t])
+
+            if t < go_back_year and balance < initial_balance:
+                balance = initial_balance
+
+            balance = max(balance, 0.0)
+
+            if return_trajectories:
+                trajectories[i, t + 1] = balance
+
+        final_balances[i] = balance
+
+    end_time = time.time()
+
+    print(
+        f"Simulation of {n_sims:,} rolling windows ({n_years} years each) took {end_time - start_time:.2f} seconds."
+    )
+
+    # Find indices of simulations that ended below zero
+    failed_indices = np.where(trajectories[:, -1] <= 0)[0]
+    # Map each failed simulation index to its starting year
+    first_year = annual.index[0]
+    last_year = annual.index[-1] - n_years + 1
+    years = np.arange(first_year, last_year + 1)
+    starting_years = years[failed_indices]
+    # Print the starting year of each failed trajectory
+    for y in starting_years:
+        print(f"Simulation starting in {y} failed (ending balance ≤ 0).")
+
     return SimulationData(
         initial_balance,
         withdrawal,
