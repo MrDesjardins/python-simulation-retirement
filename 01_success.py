@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from common import run_simulation
+from common import run_simulation_mp
 
-simulation_data = run_simulation()
+# simulation_data = run_simulation()
+simulation_data = run_simulation_mp(return_trajectories=False)
 simulation_data.print_stats()
 final_balances = simulation_data.final_balances
 n_sims = simulation_data.n_sims
@@ -18,9 +19,10 @@ normal = final_balances[(final_balances > 0) & (final_balances <= cap)]
 overflow = final_balances[final_balances > cap]
 
 print(f"{len(underflow):,} simulations ended ≤ $0.")
-print(f"{len(overflow):,} simulations ended > $20M.")
+print(f"{len(normal):,} simulations between $0 and $40M.")
+print(f"{len(overflow):,} simulations ended > $40M.")
 
-# Define bins up to $10M
+# Define bins up to $40M
 bins = np.arange(0, cap + bin_width, bin_width)
 
 plt.figure(figsize=(12, 8))
@@ -40,7 +42,7 @@ plt.ylabel("Frequency")
 jump = 4
 tick_positions = list(bins[::jump])  # every 1M for readability
 tick_positions = [-bin_width/2] + tick_positions + [cap + bin_width/2]
-tick_labels = ["≤ $0"] + [f"${int(x/1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}" for x in bins[::jump]] + ["20M+"]
+tick_labels = ["≤ $0"] + [f"${int(x/1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}" for x in bins[::jump]] + ["40M+"]
 plt.xticks(tick_positions, tick_labels, rotation=30, ha='right', fontsize=10)
 
 plt.yscale("log")
