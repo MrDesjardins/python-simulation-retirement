@@ -3,6 +3,8 @@ from multiprocessing import Pool, cpu_count
 import pandas as pd
 import numpy as np
 
+from random_utils import generate_constrained_indices
+
 
 class SimulationData:
     def __init__(
@@ -78,31 +80,37 @@ class SimulationData:
         print(
             f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
         )
-        # Compute year-over-year changes
-        yearly_change = self.trajectories[:, 1:] - self.trajectories[:, :-1]
+        # Compute year-over-year changes`
+        if self.trajectories is not None:
+            np.set_printoptions(suppress=True, precision=2, linewidth=150)
 
-        # Boolean array: True if negative change (loss)
-        loss_years = yearly_change < 0
-        # Sliding window of length along years
-        window_size = 5
-        windows = np.lib.stride_tricks.sliding_window_view(
-            loss_years, window_size, axis=1
-        )
+            yearly_change = self.trajectories[:, 1:] - self.trajectories[:, :-1]
 
-        consecutive_year_lost = np.all(windows, axis=2)  # shape: (n_sims, n_years - 3)
+            #print(yearly_change)
+            # Boolean array: True if negative change (loss)
+            loss_years = yearly_change < 0
+            # Sliding window of length along years
+            window_size = 5
+            windows = np.lib.stride_tricks.sliding_window_view(
+                loss_years, window_size, axis=1
+            )
 
-        sim_with_year_neg = np.any(consecutive_year_lost, axis=1)
+            consecutive_year_lost = np.all(
+                windows, axis=2
+            )  # shape: (n_sims, n_years - 3)
 
-        print(
-            f"{np.sum(sim_with_year_neg)} simulations ({np.sum(sim_with_year_neg) / len(sim_with_year_neg):.1%}) had {window_size} or more consecutive negative years."
-        )
-        frac_loss = np.sum(loss_years, axis=1) / loss_years.shape[1]
+            sim_with_year_neg = np.any(consecutive_year_lost, axis=1)
 
-        sim_more_than_50pct_loss = frac_loss > 0.5
+            print(
+                f"{np.sum(sim_with_year_neg)} simulations ({np.sum(sim_with_year_neg) / len(sim_with_year_neg):.1%}) had {window_size} or more consecutive negative years."
+            )
+            frac_loss = np.sum(loss_years, axis=1) / loss_years.shape[1]
 
-        print(
-            f"{np.sum(sim_more_than_50pct_loss)} simulations ({np.sum(sim_more_than_50pct_loss) / len(sim_more_than_50pct_loss):.1%}) had more than 50% negative years."
-        )
+            sim_more_than_50pct_loss = frac_loss > 0.5
+
+            print(
+                f"{np.sum(sim_more_than_50pct_loss)} simulations ({np.sum(sim_more_than_50pct_loss) / len(sim_more_than_50pct_loss):.1%}) had more than 50% negative years."
+            )
 
 
 # global to be set in initializer
@@ -112,6 +120,7 @@ _INITIAL_BALANCE = None
 _WITHDRAWAL = None
 _WITHDRAWAL_NEGATIVE_YEAR = None
 _GO_BACK_YEARS = None
+_RANDOM_CONSTRAINED_INDICES = None
 
 
 def _init_worker(
@@ -121,14 +130,16 @@ def _init_worker(
     withdrawal,
     withdrawal_negative_year,
     go_back_year,
+    random_with_real_life_constraints,
 ):
-    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS
+    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, _RANDOM_CONSTRAINED_INDICES
     _RETURNS = returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
     _WITHDRAWAL = withdrawal
     _WITHDRAWAL_NEGATIVE_YEAR = withdrawal_negative_year
     _GO_BACK_YEARS = go_back_year
+    _RANDOM_CONSTRAINED_INDICES = random_with_real_life_constraints
 
 
 def _simulate_chunk(args):
@@ -143,8 +154,14 @@ def _simulate_chunk(args):
     # Generate shuffled indices: shape (chunk_size, n_years)
     # memory: chunk_size * n_years * 8 bytes
     idx = np.empty((chunk_size, _N_YEARS), dtype=np.int64)
-    for i in range(chunk_size):
-        idx[i] = rng.permutation(m)[:_N_YEARS]
+    if _RANDOM_CONSTRAINED_INDICES:
+        for i in range(chunk_size):
+            idx[i] = generate_constrained_indices(
+                rng, _RETURNS, _N_YEARS, max_consec_neg=4, max_consec_drop=-0.5
+            )
+    else:
+        for i in range(chunk_size):
+            idx[i] = rng.permutation(m)[:_N_YEARS]
 
     sim_returns = _RETURNS[idx]  # shape (chunk_size, n_years)
     balances = np.full(chunk_size, _INITIAL_BALANCE, dtype=np.float64)
@@ -191,6 +208,7 @@ def run_simulation_mp(
     n_workers=None,
     return_trajectories=False,
     chunk_size=None,
+    random_with_real_life_constraints=True,
 ):
     # Load returns from your file (same as before)
     start_time = time.time()
@@ -234,6 +252,7 @@ def run_simulation_mp(
             withdrawal,
             withdrawal_negative_year,
             go_back_year,
+            random_with_real_life_constraints,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
@@ -259,9 +278,15 @@ def run_simulation_mp(
         trajectories = trajectories[:n_sims]
 
     end_time = time.time()
-    print(
-        f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds."
+    mode = (
+        "constrained random"
+        if random_with_real_life_constraints
+        else "unconstrained random"
     )
+    print(
+        f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds using {mode}."
+    )
+
     # Return a simple object (adapt to your SimulationData)
     return SimulationData(
         initial_balance,
