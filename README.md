@@ -15,7 +15,9 @@ uv init
 # Run Code
 
 ```sh 
-uv run main.py
+uv run 01_success.py
+uv run 02_simulation_lines.py
+uv run 03_historical_value.py
 ```
 
 
