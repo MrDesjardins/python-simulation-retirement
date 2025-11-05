@@ -28,15 +28,16 @@ class SimulationData:
         self.trajectories = trajectories
         self.total_years = total_years
         self.returns_by_year = returns_by_year
+        self.probability_of_success = np.mean(final_balances > 0)
+        self.std_final = np.std(final_balances, ddof=1) # ddof=1 for sample standard deviation
+        self.std_error = self.std_final / np.sqrt(n_sims)
 
     def print_stats(self):
-        prob_success = np.mean(self.final_balances > 0)
+        prob_success = self.probability_of_success
         mean_final = np.mean(self.final_balances)
         median_final = np.median(self.final_balances)
         percentiles = np.percentile(self.final_balances, [10, 25, 75, 90])
-        std_final = np.std(
-            self.final_balances, ddof=1
-        )  # ddof=1 for sample standard deviation
+        std_final = self.std_final
         # 95% confidence interval
         z = 1.96
         n = len(self.final_balances)
@@ -76,7 +77,7 @@ class SimulationData:
             [f"${p:,.0f}" for p in percentiles],
         )
         print(f"Standard deviation of ending balances: ${std_final:,.0f}")
-        print(f"Mean ending balance: ${mean_final:,.0f}")
+        print(f"Mean ending balance: ${mean_final:,.0f} with standard error ${self.std_error:,.0f}")
         print(
             f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
         )
@@ -199,7 +200,7 @@ def _simulate_chunk(args):
 
 
 def run_simulation_mp(
-    n_sims=1_000_000,
+    n_sims=100_000,
     n_years=45,
     initial_balance=6_000_000,
     withdrawal=120_000,
