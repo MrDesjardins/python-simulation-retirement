@@ -2,7 +2,7 @@ import time
 from multiprocessing import Pool, cpu_count
 import pandas as pd
 import numpy as np
-
+import math
 from random_utils import generate_constrained_indices
 
 
@@ -29,7 +29,9 @@ class SimulationData:
         self.total_years = total_years
         self.returns_by_year = returns_by_year
         self.probability_of_success = np.mean(final_balances > 0)
-        self.std_final = np.std(final_balances, ddof=1) # ddof=1 for sample standard deviation
+        self.std_final = np.std(
+            final_balances, ddof=1
+        )  # ddof=1 for sample standard deviation
         self.std_error = self.std_final / np.sqrt(n_sims)
 
     def print_stats(self):
@@ -77,7 +79,9 @@ class SimulationData:
             [f"${p:,.0f}" for p in percentiles],
         )
         print(f"Standard deviation of ending balances: ${std_final:,.0f}")
-        print(f"Mean ending balance: ${mean_final:,.0f} with standard error ${self.std_error:,.0f}")
+        print(f"Mean ending balance: ${mean_final:,.0f}")
+        print(f"Standard error: ${self.std_error:,.0f}")
+        print(f"Standard error / mean: ${self.std_error / mean_final:.3%}")
         print(
             f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
         )
@@ -87,7 +91,7 @@ class SimulationData:
 
             yearly_change = self.trajectories[:, 1:] - self.trajectories[:, :-1]
 
-            #print(yearly_change)
+            # print(yearly_change)
             # Boolean array: True if negative change (loss)
             loss_years = yearly_change < 0
             # Sliding window of length along years
@@ -179,6 +183,10 @@ def _simulate_chunk(args):
         withdrawals = np.where(
             sim_returns[:, t] >= 0, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR
         )
+        if t == 0 and i == 0:  # first simulation
+            print(sim_returns[:5, :5])
+            print("Withdrawals:", withdrawals[:5])
+
         # Apply inflation
         withdrawals = withdrawals * ((1 + inflation_rate) ** t)
 
@@ -201,15 +209,15 @@ def _simulate_chunk(args):
 
 def run_simulation_mp(
     n_sims=100_000,
-    n_years=45,
+    n_years=35,
     initial_balance=6_000_000,
-    withdrawal=120_000,
-    withdrawal_negative_year=40_000,
+    withdrawal=100_000,
+    withdrawal_negative_year=100_000,
     go_back_year=0,
     n_workers=None,
     return_trajectories=False,
     chunk_size=None,
-    random_with_real_life_constraints=True,
+    random_with_real_life_constraints=False,
 ):
     # Load returns from your file (same as before)
     start_time = time.time()
@@ -390,3 +398,71 @@ def run_simulation_historical_real(
         total_years,
         returns_by_year=returns,
     )
+
+
+def inverse_exponential(value, vmin, vmax, k=5):
+    """
+    Maps a value between vmin and vmax to a number between 0 and 1
+    with rapid decay (inverse exponential), numerically mirroring `exponential`.
+
+    Parameters:
+    - value: the input value
+    - vmin: minimum value (maps to 1)
+    - vmax: maximum value (maps to 0)
+    - k: controls steepness of the decay (default 5) 0 flat, 10 very sharp
+
+    Returns:
+    - float between 0 and 1
+    """
+    value = max(min(value, vmax), vmin)
+    # Flip input relative to exponential
+    x = vmax - (value - vmin)
+    return (1 - math.exp(-k * ((x - vmin) / (vmax - vmin)))) / (1 - math.exp(-k))
+
+
+def exponential(value, vmin, vmax, k=5):
+    """
+    Maps a value between vmin and vmax to a number between 0 and 1
+    with rapid growth (exponential).
+
+    Parameters:
+    - value: the input value
+    - vmin: minimum value (maps to 0)
+    - vmax: maximum value (maps to 1)
+    - k: controls steepness of the growth (default 5) 0 flat, 10 very sharp
+
+    Returns:
+    - float between 0 and 1
+    """
+    # Clamp value to min/max
+    value = max(min(value, vmax), vmin)
+
+    # Normalized exponential growth
+    return (1 - math.exp(-k * (value - vmin) / (vmax - vmin))) / (1 - math.exp(-k))
+
+
+def threshold_power_map(v: float, t: float = 0.75, k: float = 0.5) -> float:
+    """
+    Map v in [0,1] to:
+      - 0 when v < t
+      - t when v == t
+      - > v (amplified) when v > t, approaching 1 at v == 1
+
+    Parameters:
+      v : input in [0,1]
+      t : threshold in [0,1) (e.g. 0.75)
+      k : power exponent in (0,1].  k < 1 => concave / amplifies values near 1.
+            Typical: 0.3..0.6.  p==1 => linear mapping on [t,1].
+
+    Returns:
+      mapped float in [0,1]
+    """
+    # clamp v and t to valid ranges
+    v = max(0.0, min(1.0, v))
+    t = max(0.0, min(1.0, t))
+
+    if v < t:
+        return 0.0
+    # normalized position within (t..1)
+    s = (v - t) / (1.0 - t)  # in [0,1]
+    return t + (1.0 - t) * (s ** k)

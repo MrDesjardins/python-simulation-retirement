@@ -22,3 +22,16 @@ uv run 03_historical_value.py
 
 
 
+# Simulation with Hyperparameter Optimization
+
+```sh
+uv run 04_tuning.py
+uv run optuna-dashboard sqlite:///db.sqlite3
+```
+
+
+# Unit Test
+
+```sh
+uv run pytest -v -s ./*_test.py 
+```

@@ -4,7 +4,13 @@ import matplotlib.ticker as mticker
 from common import run_simulation_mp
 
 # simulation_data = run_simulation()
-simulation_data = run_simulation_mp(return_trajectories=False)
+simulation_data = run_simulation_mp(
+    return_trajectories=False,
+    n_sims=100_000,
+    initial_balance=3_500_000,
+    withdrawal=120_000,
+    random_with_real_life_constraints=False,
+)
 simulation_data.print_stats()
 final_balances = simulation_data.final_balances
 n_sims = simulation_data.n_sims
@@ -24,22 +30,43 @@ bins = np.arange(0, cap + bin_width, bin_width)
 plt.figure(figsize=(12, 8))
 
 # Plot normal balances
-counts, edges, patches = plt.hist(normal, bins=bins, edgecolor='black')
+counts, edges, patches = plt.hist(normal, bins=bins, edgecolor="black")
 
 if len(underflow) > 0:
-    plt.bar(-bin_width/2, len(underflow), width=bin_width, color='gray', edgecolor='black', label="≤ $0")
+    plt.bar(
+        -bin_width / 2,
+        len(underflow),
+        width=bin_width,
+        color="gray",
+        edgecolor="black",
+        label="≤ $0",
+    )
 
 if len(overflow) > 0:
-    plt.bar(cap + bin_width/2, len(overflow), width=bin_width, color='red', edgecolor='black', label="40M+")
+    plt.bar(
+        cap + bin_width / 2,
+        len(overflow),
+        width=bin_width,
+        color="red",
+        edgecolor="black",
+        label="40M+",
+    )
 
 plt.title(f"Monte Carlo Results ({n_sims:,} runs, {n_years} years)")
 plt.xlabel("Ending Balance ($)")
 plt.ylabel("Frequency")
 jump = 4
 tick_positions = list(bins[::jump])  # every 1M for readability
-tick_positions = [-bin_width/2] + tick_positions + [cap + bin_width/2]
-tick_labels = ["≤ $0"] + [f"${int(x/1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}" for x in bins[::jump]] + ["40M+"]
-plt.xticks(tick_positions, tick_labels, rotation=30, ha='right', fontsize=10)
+tick_positions = [-bin_width / 2] + tick_positions + [cap + bin_width / 2]
+tick_labels = (
+    ["≤ $0"]
+    + [
+        f"${int(x/1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}"
+        for x in bins[::jump]
+    ]
+    + ["40M+"]
+)
+plt.xticks(tick_positions, tick_labels, rotation=30, ha="right", fontsize=10)
 
 plt.yscale("log")
 ax = plt.gca()
