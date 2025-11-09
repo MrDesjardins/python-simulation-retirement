@@ -81,7 +81,7 @@ class SimulationData:
         print(f"Standard deviation of ending balances: ${std_final:,.0f}")
         print(f"Mean ending balance: ${mean_final:,.0f}")
         print(f"Standard error: ${self.std_error:,.0f}")
-        print(f"Standard error / mean: ${self.std_error / mean_final:.3%}")
+        print(f"Standard error / mean: {self.std_error / mean_final:.3%}")
         print(
             f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
         )
@@ -126,6 +126,9 @@ _WITHDRAWAL = None
 _WITHDRAWAL_NEGATIVE_YEAR = None
 _GO_BACK_YEARS = None
 _RANDOM_CONSTRAINED_INDICES = None
+_SP500_PERCENTAGE = None
+_BOND_RATE = None
+_INFLATION_RATE = None
 
 
 def _init_worker(
@@ -136,8 +139,11 @@ def _init_worker(
     withdrawal_negative_year,
     go_back_year,
     random_with_real_life_constraints,
+    sp500_percentage,
+    bond_rate,
+    inflation_rate,
 ):
-    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, _RANDOM_CONSTRAINED_INDICES
+    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE
     _RETURNS = returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
@@ -145,6 +151,9 @@ def _init_worker(
     _WITHDRAWAL_NEGATIVE_YEAR = withdrawal_negative_year
     _GO_BACK_YEARS = go_back_year
     _RANDOM_CONSTRAINED_INDICES = random_with_real_life_constraints
+    _SP500_PERCENTAGE = sp500_percentage
+    _BOND_RATE = bond_rate
+    _INFLATION_RATE = inflation_rate
 
 
 def _simulate_chunk(args):
@@ -177,21 +186,25 @@ def _simulate_chunk(args):
     else:
         trajectories = None
 
-    inflation_rate = 0.03
+    inflation_rate = _INFLATION_RATE
+    inflation_factors = (1.0 + inflation_rate) ** np.arange(_N_YEARS)
     # Vectorized year loop (fast: operates on arrays of size chunk_size)
     for t in range(_N_YEARS):
         withdrawals = np.where(
-            sim_returns[:, t] >= 0, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR
+            sim_returns[:, t] >= 0, float(_WITHDRAWAL), float(_WITHDRAWAL_NEGATIVE_YEAR)
         )
-        if t == 0 and i == 0:  # first simulation
-            print(sim_returns[:5, :5])
-            print("Withdrawals:", withdrawals[:5])
+        # if t == 0:  # first simulation
+        #     print(sim_returns[:5, :5])
+        #     print("Withdrawals:", withdrawals[:5])
 
         # Apply inflation
-        withdrawals = withdrawals * ((1 + inflation_rate) ** t)
+        withdrawals *= inflation_factors[t]
 
         # Update balances
-        balances = (balances - withdrawals) * (1.0 + sim_returns[:, t])
+        portfolio_growth = (1 + sim_returns[:, t]) ** _SP500_PERCENTAGE * (
+            1 + _BOND_RATE
+        ) ** (1 - _SP500_PERCENTAGE)
+        balances = (balances - withdrawals) * portfolio_growth
 
         # In the case the balance goes under the initial money in the first 5 years, we
         # go back to work to get back to the initial balance
@@ -218,6 +231,9 @@ def run_simulation_mp(
     return_trajectories=False,
     chunk_size=None,
     random_with_real_life_constraints=False,
+    sp500_percentage=1.0,
+    bond_rate=0.04,
+    inflation_rate=0.03,
 ):
     # Load returns from your file (same as before)
     start_time = time.time()
@@ -262,6 +278,9 @@ def run_simulation_mp(
             withdrawal_negative_year,
             go_back_year,
             random_with_real_life_constraints,
+            sp500_percentage,
+            bond_rate,
+            inflation_rate,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
@@ -286,15 +305,15 @@ def run_simulation_mp(
     if return_trajectories:
         trajectories = trajectories[:n_sims]
 
-    end_time = time.time()
-    mode = (
-        "constrained random"
-        if random_with_real_life_constraints
-        else "unconstrained random"
-    )
-    print(
-        f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds using {mode}."
-    )
+    # end_time = time.time()
+    # mode = (
+    #     "constrained random"
+    #     if random_with_real_life_constraints
+    #     else "unconstrained random"
+    # )
+    # print(
+    #     f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds using {mode}."
+    # )
 
     # Return a simple object (adapt to your SimulationData)
     return SimulationData(
@@ -317,6 +336,7 @@ def run_simulation_historical_real(
     withdrawal_negative_year=80_000,
     go_back_year=0,
     return_trajectories=False,
+    inflation_rate=0.03,
 ):
     start_time = time.time()
 
@@ -342,8 +362,6 @@ def run_simulation_historical_real(
         if return_trajectories
         else None
     )
-
-    inflation_rate = 0.03
 
     # --- Run each simulation sequentially ---
     for i, start in enumerate(start_indices):
@@ -465,4 +483,4 @@ def threshold_power_map(v: float, t: float = 0.75, k: float = 0.5) -> float:
         return 0.0
     # normalized position within (t..1)
     s = (v - t) / (1.0 - t)  # in [0,1]
-    return t + (1.0 - t) * (s ** k)
+    return t + (1.0 - t) * (s**k)

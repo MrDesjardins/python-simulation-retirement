@@ -3,7 +3,12 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from common import run_simulation_historical_real
 
-simulation_data = run_simulation_historical_real(return_trajectories=True)
+simulation_data = run_simulation_historical_real(
+    return_trajectories=True,
+    initial_balance=4_500_000,
+    withdrawal=110_000,
+    withdrawal_negative_year=88_000
+)
 simulation_data.print_stats()
 trajectories = simulation_data.trajectories
 n_sims = simulation_data.n_sims
