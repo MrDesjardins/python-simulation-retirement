@@ -7,18 +7,18 @@ STD_ERROR_DIFF_THRESHOLD = 0.02  # stop increasing n_sims if std_error stabilize
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE_RANGE = (3_000_000, 6_000_000)
+INITIAL_BALANCE_RANGE = (2_000_000, 10_000_000)
 INITIAL_BALANCE_STEP = 250_000
-WITHDRAWAL_RANGE = (100_000, 125_000)
-WITHDRAWAL_STEP = 5_000
-WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
-WITHDRAWAL_NEGATIVE_STEP = 0.05
+WITHDRAWAL_RANGE = (86_000, 120_000)
+WITHDRAWAL_STEP = 2_000
+WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.86, 1.0)
+WITHDRAWAL_NEGATIVE_STEP = 0.02
 N_SIMS_RANGE = (25_000, 500_000)
 STEP_N_SIMS = 25_000
-TRIAL_COUNT = 150
+TRIAL_COUNT = 200
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v72"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v76"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
 REAL_LIFE_CONSTRAINTS = False
 RETIREMENT_YEARS = 40
@@ -127,8 +127,12 @@ def objective(trial):
 
     # Encourage lower starting balances
     initial_balance_term = inverse_exponential(
-        initial_balance, *INITIAL_BALANCE_RANGE, 3
+        initial_balance, *INITIAL_BALANCE_RANGE, 2
     )
+
+    # Encourage small difference between negative year and normal withdrawal
+    withdrawal_diff_ratio = (withdrawal - withdrawal_negative_year) / withdrawal
+    withdrawal_diff_ratio_term = inverse_exponential(withdrawal_diff_ratio, 0.0, 1.0, 3)
 
     # Strongly reward ending with more than initial
     final_balance_term = exponential(
@@ -141,7 +145,8 @@ def objective(trial):
     score = (
         prob_term * 0.3
         + withdrawal_term * 0.1
-        + initial_balance_term * 0.3
+        + initial_balance_term * 0.25
+        + withdrawal_diff_ratio_term * 0.05
         + final_balance_term * 0.3
     )
 
@@ -151,6 +156,7 @@ def objective(trial):
     trial.set_user_attr("withdrawal_term", float(withdrawal_term))
     trial.set_user_attr("withdrawal_negative_year", float(withdrawal_negative_year))
     trial.set_user_attr("initial_balance_term", float(initial_balance_term))
+    trial.set_user_attr("withdrawal_diff_ratio_term", float(withdrawal_diff_ratio_term))
     trial.set_user_attr("final_balance_term", float(final_balance_term))
     trial.set_user_attr("vmin_final_balance", float(vmin))
     trial.set_user_attr("vmax_final_balance", float(vmax))
@@ -207,6 +213,7 @@ if __name__ == "__main__":
     print(f"  Prob Success: {best_trial.user_attrs['prob_term']:.4f}")
     print(f"  Withdraw: {best_trial.user_attrs['withdrawal_term']:.4f}")
     print(f"  Init Balance: {best_trial.user_attrs['initial_balance_term']:.4f}")
+    print(f"  Withdraw Diff Ratio: {best_trial.user_attrs['withdrawal_diff_ratio_term']:.4f}")
     print(f"  Final Balance: {best_trial.user_attrs['final_balance_term']:.4f}")
 
     # Leaderboard
