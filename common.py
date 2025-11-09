@@ -48,22 +48,22 @@ class SimulationData:
         ci_upper = mean_final + z * (std_final / np.sqrt(n))
 
         # Define bin edges
-        bins = [-float("inf"), -0.20, -0.10, 0, 0.10, 0.20, float("inf")]
-        labels = [
-            "< -20%",
-            "-20% to -10%",
-            "-10% to 0%",
-            "0% to 10%",
-            "10% to 20%",
-            "20% +",
-        ]
-        binned = pd.cut(self.returns_by_year, bins=bins, labels=labels)
-        print(
-            f"The simulation starts using a portfolio balance of ${self.initial_balance:,.0f}."
-        )
-        print(f"There is {self.total_years} years of historical return data.")
-        print("Return distribution over historical years:")
-        print(binned.value_counts().sort_index())
+        # bins = [-float("inf"), -0.20, -0.10, 0, 0.10, 0.20, float("inf")]
+        # labels = [
+        #     "< -20%",
+        #     "-20% to -10%",
+        #     "-10% to 0%",
+        #     "0% to 10%",
+        #     "10% to 20%",
+        #     "20% +",
+        # ]
+        # binned = pd.cut(self.returns_by_year, bins=bins, labels=labels)
+        # print(
+        #     f"The simulation starts using a portfolio balance of ${self.initial_balance:,.0f}."
+        # )
+        # print(f"There is {self.total_years} years of historical return data.")
+        # print("Return distribution over historical years:")
+        # print(binned.value_counts().sort_index())
         print(
             f"\nProbability portfolio survives {self.n_years} years: {prob_success:.1%} if withdrawing ${self.withdrawal:,.0f} per year and in negative years ${self.withdrawal_negative_year:,.0f} per year."
         )
