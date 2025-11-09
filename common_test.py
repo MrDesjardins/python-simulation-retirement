@@ -1,6 +1,9 @@
 import pytest
 from common import exponential, inverse_exponential, threshold_power_map
 
+def test_exponential_value_under_min_value() -> None:
+    result = exponential(1, 5, 10)
+    assert result == 0
 
 def test_exponential_min_value() -> None:
     result = exponential(0, 0, 1)

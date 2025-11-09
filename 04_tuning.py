@@ -1,11 +1,6 @@
 import optuna
 import numpy as np
-from common import (
-    exponential,
-    inverse_exponential,
-    run_simulation_mp,
-    threshold_power_map,
-)
+from common import exponential, inverse_exponential, run_simulation_mp
 
 # Thresholds for adaptive simulation
 STD_ERROR_DIFF_THRESHOLD = 0.02  # stop increasing n_sims if std_error stabilizes
@@ -14,24 +9,23 @@ STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 # Constants
 INITIAL_BALANCE_RANGE = (3_000_000, 6_000_000)
 INITIAL_BALANCE_STEP = 250_000
-WITHDRAWAL_RANGE = (100_000, 140_000)
+WITHDRAWAL_RANGE = (100_000, 125_000)
 WITHDRAWAL_STEP = 5_000
-WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.85, 1.0)
+WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
 WITHDRAWAL_NEGATIVE_STEP = 0.05
 N_SIMS_RANGE = (25_000, 500_000)
 STEP_N_SIMS = 25_000
 TRIAL_COUNT = 150
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v47"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v72"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
-REAL_LIFE_CONSTRAINTS = True
+REAL_LIFE_CONSTRAINTS = False
 RETIREMENT_YEARS = 40
-PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND = 0.5
+PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND = 0.1
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.03
-BOND_RATE = 0.03
-MAX_GAIN_MULTIPLIER = 2.0
+INFLATION_RATE = 0.04
+BOND_RATE = 0.0365  # Bond rate for 2 years as of November 2025
 
 
 def objective(trial):
@@ -61,7 +55,7 @@ def objective(trial):
         step=PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP,
     )
 
-    # Adaptive Monte Carlo configuration
+    # Adaptive Monte Carlo configuration (unchanged)
     n_sims = N_SIMS_RANGE[0]
     max_n_sims = N_SIMS_RANGE[1]
     step_n_sims = STEP_N_SIMS
@@ -89,11 +83,6 @@ def objective(trial):
 
         std_error_relative_to_mean = std_error / simulation_data.final_balances.mean()
 
-        # print(
-        #     f"Trial {trial.number} | n_sims={n_sims:,} | std_error={std_error:.4f} | final_balance_mean={simulation_data.final_balances.mean():.4f} | "
-        #     f"diff_compare_last={diff_compare_last:.4%} | std_error_rel={std_error_relative_to_mean:.4%}"
-        # )
-
         # Stop if we have good convergence
         if std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE or (
             diff_compare_last != float("inf")
@@ -108,13 +97,7 @@ def objective(trial):
     trial.set_user_attr("n_sims_used", n_sims)
 
     # Already between 0 and 1
-    prob_success = simulation_data.probability_of_success
-
-    # Composite scoring logic (should be between 0 and 1 but does not have to)
-    #   1. Prioritize success rate
-    #   2. Among high success, prefer higher withdrawal
-    #   3. Among equal withdrawal, prefer lower initial balance
-    #   Each term is scaled to similar magnitude.
+    prob_success = float(simulation_data.probability_of_success)
 
     final_balances = simulation_data.final_balances
     if final_balances.ndim == 2:
@@ -122,39 +105,61 @@ def objective(trial):
     else:
         last_year_balances = final_balances
     final_balance_growth_ratios = last_year_balances / initial_balance
-    final_balance_relative_gain = np.clip(
-        (final_balance_growth_ratios - 1) / (2 - 1), 0, 1
-    )  # 2x cap
-    final_balance_average_relative_median = np.median(final_balance_relative_gain)
-    final_balance_average_relative_min = np.min(final_balance_relative_gain)
-    final_balance_average_relative_max = np.max(final_balance_relative_gain)
-    # gap_ratio = np.clip((withdrawal - withdrawal_negative_year) / withdrawal, 0, 1)
-    score = (
-        threshold_power_map(prob_success, 0.85, 0.2) * 0.65
-        + exponential(withdrawal, *WITHDRAWAL_RANGE, 5)
-        * 0.05  # Encourage higher withdrawals
-        + inverse_exponential(initial_balance, *INITIAL_BALANCE_RANGE, 4)
-        * 0.1  # Encourage lower initial balances
-        + exponential(
-            final_balance_average_relative_median,
-            min(1, final_balance_average_relative_min),
-            min(1, final_balance_average_relative_max),
-            5,
-        )
-        * 0.2  # Encourage ending with more than initial balance
+
+    # Robust statistics for scaling (avoid per-trial min/max and outliers):
+    # use percentile bounds so mapping is stable across similar trials
+    vmin = float(np.percentile(final_balance_growth_ratios, 5))
+    vmax = float(np.percentile(final_balance_growth_ratios, 95))
+
+    # If percentiles collapse (rare), fallback to sensible defaults relative to initial_balance
+    # e.g. allow values from 0 (complete loss) up to 3x initial
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or (vmax - vmin) < 1e-6:
+        vmin = 0.0
+        vmax = max(1.0, np.median(final_balance_growth_ratios) * 2.0)
+
+    final_balance_growth_ratios_median = float(np.median(final_balance_growth_ratios))
+
+    # Probability term (differentiates high 0.9–1 range)
+    prob_term = exponential(prob_success, 0.9, 1.0, 7)
+
+    # Encourage higher withdrawals slightly
+    withdrawal_term = exponential(withdrawal, *WITHDRAWAL_RANGE, 8)
+
+    # Encourage lower starting balances
+    initial_balance_term = inverse_exponential(
+        initial_balance, *INITIAL_BALANCE_RANGE, 3
     )
 
-    trial.set_user_attr("prob_success", float(prob_success))
+    # Strongly reward ending with more than initial
+    final_balance_term = exponential(
+        np.clip(final_balance_growth_ratios_median, 0.0, 10.0),
+        0,
+        10.0,
+        10,
+    )
+
+    score = (
+        prob_term * 0.3
+        + withdrawal_term * 0.1
+        + initial_balance_term * 0.3
+        + final_balance_term * 0.3
+    )
+
+    # Save diagnostics so we can inspect importance of each term
+    trial.set_user_attr("prob_success", prob_success)
+    trial.set_user_attr("prob_term", float(prob_term))
+    trial.set_user_attr("withdrawal_term", float(withdrawal_term))
+    trial.set_user_attr("withdrawal_negative_year", float(withdrawal_negative_year))
+    trial.set_user_attr("initial_balance_term", float(initial_balance_term))
+    trial.set_user_attr("final_balance_term", float(final_balance_term))
+    trial.set_user_attr("vmin_final_balance", float(vmin))
+    trial.set_user_attr("vmax_final_balance", float(vmax))
     trial.set_user_attr(
-        "avg_relative_gain", float(final_balance_average_relative_median)
+        "final_relative_balance_to_median", float(final_balance_growth_ratios_median)
     )
     trial.set_user_attr("score", float(score))
-    trial.set_user_attr(
-        "final_balance_average_relative_median",
-        float(final_balance_average_relative_median),
-    )
 
-    return score  # maximize this composite score
+    return score
 
 
 if __name__ == "__main__":
@@ -172,7 +177,6 @@ if __name__ == "__main__":
 
     best_trial = study.best_trial
     best_params = best_trial.params
-    best_n_sims = best_trial.user_attrs["n_sims_used"]
 
     print(f"\n=== Optimization Results for {STUDY_NAME} ===")
     print(f"Best Trial #{best_trial.number}")
@@ -180,21 +184,31 @@ if __name__ == "__main__":
     print(f"  Withdrawal: ${best_params['withdrawal']:,}")
     print(f"  Withdrawal Negative Year: ${best_params['withdrawal_negative_year']:,}")
     print(
-        f"  Withdrawal percentage: {best_params['withdrawal_percentage_when_negative_year']:,}%"
+        f"  Withdrawal ratio: {best_params['withdrawal_percentage_when_negative_year']:.2f}"
     )
-    print(
-        f"  Probability of Success: {best_trial.user_attrs['prob_success'] * 100:.2f}%"
-    )
-    print(f"  Simulations Count used: {best_n_sims:,}")
-    print(f"  Final Score: {best_trial.user_attrs['score']:.2%}")
     print(f"  Retirement years: {RETIREMENT_YEARS} years")
     print(
         f"  Random with real life constraints: {'Yes' if REAL_LIFE_CONSTRAINTS else 'No'}"
     )
-    print(f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}")
     print(
-        f"  Median relative final balance: {best_trial.user_attrs['final_balance_average_relative_median']:.2%} of initial balance"
+        f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
     )
+    print("\n~~~~~Score Details~~~~~")
+    print("Score Components:")
+    print(
+        f"  Probability of Success: {best_trial.user_attrs['prob_success'] * 100:.2f}%"
+    )
+    print(f"  Final Score : {best_trial.user_attrs['score']:.2%}")
+    print(f"  Simulations Count used: {best_trial.user_attrs['n_sims_used']:,}")
+    print(
+        f"  Median relative final balance: {best_trial.user_attrs['final_relative_balance_to_median']:.2%} of initial balance"
+    )
+    print("Terms:")
+    print(f"  Prob Success: {best_trial.user_attrs['prob_term']:.4f}")
+    print(f"  Withdraw: {best_trial.user_attrs['withdrawal_term']:.4f}")
+    print(f"  Init Balance: {best_trial.user_attrs['initial_balance_term']:.4f}")
+    print(f"  Final Balance: {best_trial.user_attrs['final_balance_term']:.4f}")
+
     # Leaderboard
     # TOP_N = 10
     # print("\n=== Top Leaderboard ===")
@@ -211,9 +225,9 @@ if __name__ == "__main__":
     #     )
 
     # Optional: run final simulation on the best params
-    print("\nRunning final validation simulation...")
+    print("\n~~~~~Running final validation simulation~~~~~")
     final_data = run_simulation_mp(
-        n_sims=best_n_sims,
+        n_sims=best_trial.user_attrs["n_sims_used"],
         initial_balance=best_params["initial_balance"],
         withdrawal=best_params["withdrawal"],
         withdrawal_negative_year=best_params["withdrawal_negative_year"],
@@ -226,7 +240,8 @@ if __name__ == "__main__":
     print(f"Standard Deviation: ${final_data.std_final:,.0f}")
     print(f"Standard error: ${final_data.std_error:,.0f}")
     print(
-        f"Standard error / mean: {final_data.std_error / final_data.final_balances.mean():.3%}"
+        f"Relative Standard Error: {final_data.std_error / final_data.final_balances.mean():.3%}"
     )
 
     final_data.print_stats()
+    print("\n=== End of optimization ===")

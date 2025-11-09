@@ -38,7 +38,8 @@ class SimulationData:
         prob_success = self.probability_of_success
         mean_final = np.mean(self.final_balances)
         median_final = np.median(self.final_balances)
-        percentiles = np.percentile(self.final_balances, [10, 25, 75, 90])
+        percentile_list = [10, 25, 50, 75, 90]
+        percentiles = np.percentile(self.final_balances, percentile_list)
         std_final = self.std_final
         # 95% confidence interval
         z = 1.96
@@ -75,7 +76,7 @@ class SimulationData:
 
         print(f"\nMedian ending balance: ${median_final:,.0f}")
         print(
-            "10th, 25th, 75th, 90th percentile outcomes:",
+            "th, ".join([str(p) for p in percentile_list]) + "th percentile outcomes:",
             [f"${p:,.0f}" for p in percentiles],
         )
         print(f"Standard deviation of ending balances: ${std_final:,.0f}")
@@ -422,6 +423,7 @@ def inverse_exponential(value, vmin, vmax, k=5):
     """
     Maps a value between vmin and vmax to a number between 0 and 1
     with rapid decay (inverse exponential), numerically mirroring `exponential`.
+    The plot looks like a logarithmic but it decays as we go towards vmax.
 
     Parameters:
     - value: the input value
@@ -442,6 +444,7 @@ def exponential(value, vmin, vmax, k=5):
     """
     Maps a value between vmin and vmax to a number between 0 and 1
     with rapid growth (exponential).
+    The plot of this function looks like a logistic curve.
 
     Parameters:
     - value: the input value
@@ -465,6 +468,7 @@ def threshold_power_map(v: float, t: float = 0.75, k: float = 0.5) -> float:
       - 0 when v < t
       - t when v == t
       - > v (amplified) when v > t, approaching 1 at v == 1
+    The plot looks like
 
     Parameters:
       v : input in [0,1]

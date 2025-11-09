@@ -6,10 +6,14 @@ from common import run_simulation_mp
 simulation_data = run_simulation_mp(
     return_trajectories=True,
     n_sims=100_000,
-    initial_balance=4_500_000,
-    withdrawal=110_000,
-    withdrawal_negative_year=88_000,
-    random_with_real_life_constraints=True
+    initial_balance=4_750_000,
+    withdrawal=105_000,
+    withdrawal_negative_year=89_000,
+    random_with_real_life_constraints=True,
+    sp500_percentage=0.1,
+    n_years=40,
+    bond_rate=0.03,
+    inflation_rate=0.03,
 )
 simulation_data.print_stats()
 trajectories = simulation_data.trajectories
