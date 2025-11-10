@@ -7,20 +7,20 @@ STD_ERROR_DIFF_THRESHOLD = 0.02  # stop increasing n_sims if std_error stabilize
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE_RANGE = (2_000_000, 10_000_000)
-INITIAL_BALANCE_STEP = 250_000
-WITHDRAWAL_RANGE = (86_000, 120_000)
+INITIAL_BALANCE_RANGE = (3_000_000, 8_000_000)
+INITIAL_BALANCE_STEP = 200_000
+WITHDRAWAL_RANGE = (80_000, 120_000)
 WITHDRAWAL_STEP = 2_000
-WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.86, 1.0)
-WITHDRAWAL_NEGATIVE_STEP = 0.02
+WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
+WITHDRAWAL_NEGATIVE_STEP = 0.01
 N_SIMS_RANGE = (25_000, 500_000)
 STEP_N_SIMS = 25_000
-TRIAL_COUNT = 200
+TRIAL_COUNT = 400
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v76"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v78"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
-REAL_LIFE_CONSTRAINTS = False
+REAL_LIFE_CONSTRAINTS = True
 RETIREMENT_YEARS = 40
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND = 0.1
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
@@ -183,7 +183,10 @@ if __name__ == "__main__":
 
     best_trial = study.best_trial
     best_params = best_trial.params
-
+    sum_n_sims_all_trials = sum(
+        t.user_attrs.get("n_sims_used", 0) for t in study.trials
+    )
+    print(f"\nTotal simulations run across all trials: {sum_n_sims_all_trials:,}")
     print(f"\n=== Optimization Results for {STUDY_NAME} ===")
     print(f"Best Trial #{best_trial.number}")
     print(f"  Initial Balance: ${best_params['initial_balance']:,}")
@@ -204,7 +207,7 @@ if __name__ == "__main__":
     print(
         f"  Probability of Success: {best_trial.user_attrs['prob_success'] * 100:.2f}%"
     )
-    print(f"  Final Score : {best_trial.user_attrs['score']:.2%}")
+    print(f"  Final Score: {best_trial.user_attrs['score']:.2%}")
     print(f"  Simulations Count used: {best_trial.user_attrs['n_sims_used']:,}")
     print(
         f"  Median relative final balance: {best_trial.user_attrs['final_relative_balance_to_median']:.2%} of initial balance"
@@ -213,7 +216,9 @@ if __name__ == "__main__":
     print(f"  Prob Success: {best_trial.user_attrs['prob_term']:.4f}")
     print(f"  Withdraw: {best_trial.user_attrs['withdrawal_term']:.4f}")
     print(f"  Init Balance: {best_trial.user_attrs['initial_balance_term']:.4f}")
-    print(f"  Withdraw Diff Ratio: {best_trial.user_attrs['withdrawal_diff_ratio_term']:.4f}")
+    print(
+        f"  Withdraw Diff Ratio: {best_trial.user_attrs['withdrawal_diff_ratio_term']:.4f}"
+    )
     print(f"  Final Balance: {best_trial.user_attrs['final_balance_term']:.4f}")
 
     # Leaderboard
