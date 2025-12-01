@@ -41,11 +41,14 @@ class SimulationData:
         percentile_list = [10, 25, 50, 75, 90]
         percentiles = np.percentile(self.final_balances, percentile_list)
         std_final = self.std_final
-        # 95% confidence interval
-        z = 1.96
+        
+        z95 = 1.96 # 95% confidence interval
+        z99 = 2.576 # 99% confidence interval
         n = len(self.final_balances)
-        ci_lower = mean_final - z * (std_final / np.sqrt(n))
-        ci_upper = mean_final + z * (std_final / np.sqrt(n))
+        ci_lower_95 = mean_final - z95 * (std_final / np.sqrt(n))
+        ci_upper_95 = mean_final + z95 * (std_final / np.sqrt(n))
+        ci_lower_99 = mean_final - z99 * (std_final / np.sqrt(n))
+        ci_upper_99 = mean_final + z99 * (std_final / np.sqrt(n))
 
         # Define bin edges
         # bins = [-float("inf"), -0.20, -0.10, 0, 0.10, 0.20, float("inf")]
@@ -84,8 +87,9 @@ class SimulationData:
         print(f"Standard error: ${self.std_error:,.0f}")
         print(f"Standard error / mean: {self.std_error / mean_final:.3%}")
         print(
-            f"95% confidence interval for the mean: ${ci_lower:,.0f} – ${ci_upper:,.0f}"
+            f"95% confidence interval for the mean: ${ci_lower_95:,.0f} – ${ci_upper_95:,.0f}"
         )
+        print(f"99% confidence interval for the mean: ${ci_lower_99:,.0f} – ${ci_upper_99:,.0f}")
         # Compute year-over-year changes`
         if self.trajectories is not None:
             np.set_printoptions(suppress=True, precision=2, linewidth=150)
@@ -161,64 +165,67 @@ def _simulate_chunk(args):
     """
     Worker: simulate `chunk_size` independent simulations.
     Returns final_balances and (optionally) trajectories.
+
     args: (chunk_size, seed, return_trajectories_bool)
     """
     chunk_size, seed, return_traj = args
     rng = np.random.default_rng(seed)
     m = len(_RETURNS)
-    # Generate shuffled indices: shape (chunk_size, n_years)
-    # memory: chunk_size * n_years * 8 bytes
+
+    # Generate shuffled or constrained indices
     idx = np.empty((chunk_size, _N_YEARS), dtype=np.int64)
     if _RANDOM_CONSTRAINED_INDICES:
         for i in range(chunk_size):
-            idx[i] = generate_constrained_indices(
-                rng, _RETURNS, _N_YEARS, max_consec_neg=4, max_consec_drop=-0.5
-            )
+            idx[i] = generate_constrained_indices(rng, _RETURNS, _N_YEARS)
     else:
         for i in range(chunk_size):
             idx[i] = rng.permutation(m)[:_N_YEARS]
 
-    sim_returns = _RETURNS[idx]  # shape (chunk_size, n_years)
-    balances = np.full(chunk_size, _INITIAL_BALANCE, dtype=np.float64)
+    # Get the returns for each simulation
+    sim_returns = _RETURNS[idx]  # shape (chunk_size, _N_YEARS)
 
+    # Initialize balances and optional trajectories
+    balances = np.full(chunk_size, _INITIAL_BALANCE, dtype=np.float64)
     if return_traj:
         trajectories = np.zeros((chunk_size, _N_YEARS + 1), dtype=np.float64)
         trajectories[:, 0] = _INITIAL_BALANCE
     else:
         trajectories = None
 
-    inflation_rate = _INFLATION_RATE
-    inflation_factors = (1.0 + inflation_rate) ** np.arange(_N_YEARS)
-    # Vectorized year loop (fast: operates on arrays of size chunk_size)
+    # Precompute inflation factors for each year
+    inflation_factors = (1.0 + _INFLATION_RATE) ** np.arange(_N_YEARS)
+
+    # Ensure _SP500_PERCENTAGE is between 0 and 1
+    sp500_frac = np.clip(_SP500_PERCENTAGE, 0.0, 1.0)
+    bond_frac = 1.0 - sp500_frac
+
+    # Vectorized simulation over years
     for t in range(_N_YEARS):
+        # Determine withdrawals depending on market return
         withdrawals = np.where(
             sim_returns[:, t] >= 0, float(_WITHDRAWAL), float(_WITHDRAWAL_NEGATIVE_YEAR)
         )
-        # if t == 0:  # first simulation
-        #     print(sim_returns[:5, :5])
-        #     print("Withdrawals:", withdrawals[:5])
+        withdrawals *= inflation_factors[t]  # Apply inflation
 
-        # Apply inflation
-        withdrawals *= inflation_factors[t]
+        # Compute portfolio growth using linear allocation
+        portfolio_growth = 1 + sp500_frac * sim_returns[:, t] + bond_frac * _BOND_RATE
 
-        # Update balances
-        portfolio_growth = (1 + sim_returns[:, t]) ** _SP500_PERCENTAGE * (
-            1 + _BOND_RATE
-        ) ** (1 - _SP500_PERCENTAGE)
+        # Update balances after withdrawals and growth
         balances = (balances - withdrawals) * portfolio_growth
 
-        # In the case the balance goes under the initial money in the first 5 years, we
-        # go back to work to get back to the initial balance
+        # Reset balances to initial if they drop below the initial balance in early years
         if t < _GO_BACK_YEARS:
-            need_to_work_scenario = balances < _INITIAL_BALANCE
-            balances[need_to_work_scenario] = _INITIAL_BALANCE
+            under_initial = balances < _INITIAL_BALANCE
+            balances[under_initial] = _INITIAL_BALANCE
 
-        # Apply a floor at zero:
+        # Apply floor at zero
         np.maximum(balances, 0.0, out=balances)
+
         if return_traj:
             trajectories[:, t + 1] = balances
 
     return balances, trajectories
+
 
 
 def run_simulation_mp(

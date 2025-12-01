@@ -7,12 +7,12 @@ from common import run_simulation_mp
 simulation_data = run_simulation_mp(
     n_years=40,
     return_trajectories=False,
-    n_sims=100_000,
-    initial_balance=4_500_000,
-    withdrawal=110_000,
-    withdrawal_negative_year=95_000,
+    n_sims=10_000_000,
+    initial_balance=5_200_000,
+    withdrawal=115_000,
+    withdrawal_negative_year=97_000,
     random_with_real_life_constraints=True,
-    sp500_percentage=0.1,
+    sp500_percentage=0.55,
     bond_rate=0.035
 )
 simulation_data.print_stats()
