@@ -1,30 +1,32 @@
+import time
 import optuna
 import numpy as np
 from common import exponential, inverse_exponential, run_simulation_mp
 
 # Thresholds for adaptive simulation
-STD_ERROR_DIFF_THRESHOLD = 0.02  # stop increasing n_sims if std_error stabilizes
+STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilizes
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE_RANGE = (3_000_000, 8_000_000)
+INITIAL_BALANCE_RANGE = (4_000_000, 8_000_000)
 INITIAL_BALANCE_STEP = 200_000
-WITHDRAWAL_RANGE = (80_000, 120_000)
-WITHDRAWAL_STEP = 2_000
+WITHDRAWAL_RANGE = (100_000, 140_000)
+WITHDRAWAL_STEP = 5_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
-WITHDRAWAL_NEGATIVE_STEP = 0.01
-N_SIMS_RANGE = (25_000, 500_000)
-STEP_N_SIMS = 25_000
-TRIAL_COUNT = 400
+WITHDRAWAL_NEGATIVE_STEP = 0.05
+N_SIMS_RANGE = (50_000, 500_000)
+STEP_N_SIMS = 50_000
+TRIAL_COUNT = 1000
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v78"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v84"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
 REAL_LIFE_CONSTRAINTS = True
 RETIREMENT_YEARS = 40
-PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND = 0.1
+PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.5
+PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.04
+INFLATION_RATE = 0.026 # Vanguard projection 10 years worse case as of November 2025
 BOND_RATE = 0.0365  # Bond rate for 2 years as of November 2025
 
 
@@ -50,8 +52,8 @@ def objective(trial):
     )
     sp500_percentage = trial.suggest_float(
         "sp500_percentage",
-        PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND,
-        1,
+        PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN,
+        PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX,
         step=PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP,
     )
 
@@ -169,6 +171,7 @@ def objective(trial):
 
 
 if __name__ == "__main__":
+    start_time = time.perf_counter()
     # Try to load an existing study; create it if it doesn't exist
     try:
         study = optuna.load_study(study_name=STUDY_NAME, storage=STORAGE_PATH)
@@ -257,3 +260,5 @@ if __name__ == "__main__":
 
     final_data.print_stats()
     print("\n=== End of optimization ===")
+    end_time = time.perf_counter()
+    print(f"Total optimization time: {end_time - start_time:.2f} seconds")
