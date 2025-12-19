@@ -8,27 +8,29 @@ STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilize
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE_RANGE = (4_000_000, 8_000_000)
+INITIAL_BALANCE_RANGE = (3_000_000, 7_000_000)
 INITIAL_BALANCE_STEP = 200_000
-WITHDRAWAL_RANGE = (100_000, 140_000)
+WITHDRAWAL_RANGE = (80_000, 120_000)
 WITHDRAWAL_STEP = 5_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
 WITHDRAWAL_NEGATIVE_STEP = 0.05
 N_SIMS_RANGE = (50_000, 500_000)
 STEP_N_SIMS = 50_000
-TRIAL_COUNT = 1000
+TRIAL_COUNT = 200
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v84"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v100"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
 REAL_LIFE_CONSTRAINTS = True
 RETIREMENT_YEARS = 40
-PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.5
+PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.026 # Vanguard projection 10 years worse case as of November 2025
-BOND_RATE = 0.0365  # Bond rate for 2 years as of November 2025
+INFLATION_RATE = 0.03 # Vanguard projection 10 years worse case as of November 2025: 0.026
+BOND_RATE = 0.03  # Bond rate for 2 years as of November 2025: 0.034
 
+YEARS_WITHOUT_SOCIAL_SECURITY = 20
+SOCIAL_SECURITY_MONEY = 40_000  # per year
 
 def objective(trial):
     # Suggest both initial balance and withdrawal amount
@@ -74,6 +76,8 @@ def objective(trial):
             sp500_percentage=sp500_percentage,
             bond_rate=BOND_RATE,
             inflation_rate=INFLATION_RATE,
+            years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
+            social_security_money=SOCIAL_SECURITY_MONEY,
         )
 
         std_error = simulation_data.std_error
@@ -122,7 +126,7 @@ def objective(trial):
     final_balance_growth_ratios_median = float(np.median(final_balance_growth_ratios))
 
     # Probability term (differentiates high 0.9–1 range)
-    prob_term = exponential(prob_success, 0.9, 1.0, 7)
+    prob_term = exponential(prob_success, 0.95, 1.0, 7)
 
     # Encourage higher withdrawals slightly
     withdrawal_term = exponential(withdrawal, *WITHDRAWAL_RANGE, 8)
@@ -145,11 +149,11 @@ def objective(trial):
     )
 
     score = (
-        prob_term * 0.3
-        + withdrawal_term * 0.1
-        + initial_balance_term * 0.25
+        prob_term * 0.40
+        + withdrawal_term * 0.25
+        + initial_balance_term * 0.05
         + withdrawal_diff_ratio_term * 0.05
-        + final_balance_term * 0.3
+        + final_balance_term * 0.25
     )
 
     # Save diagnostics so we can inspect importance of each term
@@ -250,6 +254,9 @@ if __name__ == "__main__":
         sp500_percentage=best_params["sp500_percentage"],
         bond_rate=BOND_RATE,
         n_years=RETIREMENT_YEARS,
+        inflation_rate=INFLATION_RATE,
+        years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
+        social_security_money=SOCIAL_SECURITY_MONEY,
     )
     print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
     print(f"Standard Deviation: ${final_data.std_final:,.0f}")

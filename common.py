@@ -1,5 +1,6 @@
 import time
 from multiprocessing import Pool, cpu_count
+from typing import Optional
 import pandas as pd
 import numpy as np
 import math
@@ -137,7 +138,7 @@ _INFLATION_RATE = None
 
 
 def _init_worker(
-    returns,
+    returns:int,
     n_years,
     initial_balance,
     withdrawal,
@@ -147,8 +148,11 @@ def _init_worker(
     sp500_percentage,
     bond_rate,
     inflation_rate,
+    years_without_social_security,
+    social_security_money,
 ):
-    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE
+    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
+        _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE, _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY
     _RETURNS = returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
@@ -159,7 +163,8 @@ def _init_worker(
     _SP500_PERCENTAGE = sp500_percentage
     _BOND_RATE = bond_rate
     _INFLATION_RATE = inflation_rate
-
+    _YEARS_WITHOUT_SOCIAL_SECURITY = years_without_social_security
+    _SOCIAL_SECURITY_MONEY = social_security_money
 
 def _simulate_chunk(args):
     """
@@ -199,13 +204,25 @@ def _simulate_chunk(args):
     sp500_frac = np.clip(_SP500_PERCENTAGE, 0.0, 1.0)
     bond_frac = 1.0 - sp500_frac
 
+    # Determine the amount of social security to add each year
+    social_security_per_year = np.zeros(_N_YEARS, dtype=np.float64)
+    if _SOCIAL_SECURITY_MONEY > 0:
+        years_with_ss = max(0, _N_YEARS - _YEARS_WITHOUT_SOCIAL_SECURITY)
+        # Only assign when there are actual years with social security.
+        if years_with_ss > 0:
+            social_security_per_year[-years_with_ss:] = _SOCIAL_SECURITY_MONEY * inflation_factors[-years_with_ss:]  # Adjust for inflation
+
     # Vectorized simulation over years
     for t in range(_N_YEARS):
-        # Determine withdrawals depending on market return
+        # Determine withdrawals depending on market return.
         withdrawals = np.where(
             sim_returns[:, t] >= 0, float(_WITHDRAWAL), float(_WITHDRAWAL_NEGATIVE_YEAR)
         )
         withdrawals *= inflation_factors[t]  # Apply inflation
+        # Reduce portfolio withdrawal by social security for this year (do not double-count).
+        ss_amount = social_security_per_year[t]
+        # Net withdrawal from portfolio (cannot be negative).
+        withdrawals = np.maximum(withdrawals - ss_amount, 0.0)
 
         # Compute portfolio growth using linear allocation
         portfolio_growth = 1 + sp500_frac * sim_returns[:, t] + bond_frac * _BOND_RATE
@@ -242,6 +259,8 @@ def run_simulation_mp(
     sp500_percentage=1.0,
     bond_rate=0.04,
     inflation_rate=0.03,
+    years_without_social_security=35,
+    social_security_money=0,
 ):
     # Load returns from your file (same as before)
     start_time = time.time()
@@ -289,6 +308,8 @@ def run_simulation_mp(
             sp500_percentage,
             bond_rate,
             inflation_rate,
+            years_without_social_security,
+            social_security_money,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
@@ -310,7 +331,7 @@ def run_simulation_mp(
 
     # If you produced more sims due to chunking rounding, trim to n_sims
     final_balances = final_balances[:n_sims]
-    if return_trajectories:
+    if return_trajectories and trajectories is not None:
         trajectories = trajectories[:n_sims]
 
     # end_time = time.time()

@@ -4,16 +4,18 @@ import matplotlib.ticker as mticker
 from common import run_simulation_mp
 
 simulation_data = run_simulation_mp(
-    return_trajectories=True,
-    n_sims=100_000,
-    initial_balance=6_000_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=80_000,
-    random_with_real_life_constraints=True,
-    sp500_percentage=0.7,
     n_years=40,
-    bond_rate=0.0365,
-    inflation_rate=0.04,
+    return_trajectories=True,
+    n_sims=10_000_000,
+    initial_balance=5_000_000,
+    withdrawal=100_000,
+    withdrawal_negative_year=90_000,
+    random_with_real_life_constraints=True,
+    sp500_percentage=0.65,
+    bond_rate=0.03,
+    inflation_rate=0.03,
+    social_security_money=45_000,
+    years_without_social_security=20,
 )
 simulation_data.print_stats()
 trajectories = simulation_data.trajectories
