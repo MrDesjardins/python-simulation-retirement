@@ -69,7 +69,7 @@ class SimulationData:
         # print("Return distribution over historical years:")
         # print(binned.value_counts().sort_index())
         print(
-            f"\nProbability portfolio survives {self.n_years} years: {prob_success:.1%} if withdrawing ${self.withdrawal:,.0f} per year and in negative years ${self.withdrawal_negative_year:,.0f} per year."
+            f"\nProbability portfolio survives {self.n_years} years: {prob_success:.2%} if withdrawing ${self.withdrawal:,.0f} per year and in negative years ${self.withdrawal_negative_year:,.0f} per year."
         )
 
         # Separate the three categories
@@ -125,34 +125,40 @@ class SimulationData:
 
 
 # global to be set in initializer
-_RETURNS = None
-_N_YEARS = None
-_INITIAL_BALANCE = None
-_WITHDRAWAL = None
-_WITHDRAWAL_NEGATIVE_YEAR = None
-_GO_BACK_YEARS = None
-_RANDOM_CONSTRAINED_INDICES = None
-_SP500_PERCENTAGE = None
-_BOND_RATE = None
-_INFLATION_RATE = None
-
+_RETURNS: np.ndarray
+_N_YEARS: int 
+_INITIAL_BALANCE: float
+_WITHDRAWAL: float 
+_WITHDRAWAL_NEGATIVE_YEAR: float 
+_GO_BACK_YEARS: int
+_RANDOM_CONSTRAINED_INDICES: bool 
+_SP500_PERCENTAGE: float 
+_BOND_RATE: float 
+_INFLATION_RATE: float 
+_YEARS_WITHOUT_SOCIAL_SECURITY: int 
+_SOCIAL_SECURITY_MONEY: float
+_YEARS_WITH_SUPPLEMENTAL_INCOME: int
+_SUPPLEMENTAL_INCOME: float
 
 def _init_worker(
-    returns:int,
-    n_years,
-    initial_balance,
-    withdrawal,
-    withdrawal_negative_year,
-    go_back_year,
-    random_with_real_life_constraints,
-    sp500_percentage,
-    bond_rate,
-    inflation_rate,
-    years_without_social_security,
-    social_security_money,
+    returns: np.ndarray,
+    n_years: int,
+    initial_balance: float,
+    withdrawal: float,
+    withdrawal_negative_year: float,
+    go_back_year: int,
+    random_with_real_life_constraints: bool,
+    sp500_percentage: float,
+    bond_rate: float,
+    inflation_rate: float,
+    years_without_social_security: int,
+    social_security_money: float,
+    years_with_supplemental_income: int,
+    supplemental_income: float,
 ):
     global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
-        _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE, _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY
+        _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE, _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY, \
+        _YEARS_WITH_SUPPLEMENTAL_INCOME, _SUPPLEMENTAL_INCOME
     _RETURNS = returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
@@ -165,6 +171,8 @@ def _init_worker(
     _INFLATION_RATE = inflation_rate
     _YEARS_WITHOUT_SOCIAL_SECURITY = years_without_social_security
     _SOCIAL_SECURITY_MONEY = social_security_money
+    _YEARS_WITH_SUPPLEMENTAL_INCOME = years_with_supplemental_income    
+    _SUPPLEMENTAL_INCOME = supplemental_income
 
 def _simulate_chunk(args):
     """
@@ -212,6 +220,12 @@ def _simulate_chunk(args):
         if years_with_ss > 0:
             social_security_per_year[-years_with_ss:] = _SOCIAL_SECURITY_MONEY * inflation_factors[-years_with_ss:]  # Adjust for inflation
 
+    # Add supplemental income if applicable which is reduced from the withdrawal
+    supplemental_income_per_year = np.zeros(_N_YEARS, dtype=np.float64)
+    if _SUPPLEMENTAL_INCOME > 0:
+        years_with_supplemental = min(_YEARS_WITH_SUPPLEMENTAL_INCOME, _N_YEARS)
+        supplemental_income_per_year[:years_with_supplemental] = _SUPPLEMENTAL_INCOME * inflation_factors[:years_with_supplemental]  # Adjust for inflation
+
     # Vectorized simulation over years
     for t in range(_N_YEARS):
         # Determine withdrawals depending on market return.
@@ -221,8 +235,10 @@ def _simulate_chunk(args):
         withdrawals *= inflation_factors[t]  # Apply inflation
         # Reduce portfolio withdrawal by social security for this year (do not double-count).
         ss_amount = social_security_per_year[t]
+        # Reduce portfolio withdrawal by supplemental income for this year
+        supp_amount = supplemental_income_per_year[t]
         # Net withdrawal from portfolio (cannot be negative).
-        withdrawals = np.maximum(withdrawals - ss_amount, 0.0)
+        withdrawals = np.maximum(withdrawals - ss_amount - supp_amount, 0.0)
 
         # Compute portfolio growth using linear allocation
         portfolio_growth = 1 + sp500_frac * sim_returns[:, t] + bond_frac * _BOND_RATE
@@ -246,21 +262,23 @@ def _simulate_chunk(args):
 
 
 def run_simulation_mp(
-    n_sims=100_000,
-    n_years=35,
-    initial_balance=6_000_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=100_000,
-    go_back_year=0,
-    n_workers=None,
-    return_trajectories=False,
-    chunk_size=None,
-    random_with_real_life_constraints=False,
-    sp500_percentage=1.0,
-    bond_rate=0.04,
-    inflation_rate=0.03,
-    years_without_social_security=35,
-    social_security_money=0,
+    n_sims: int = 100_000,
+    n_years: int = 35,
+    initial_balance: float = 6_000_000,
+    withdrawal: float = 100_000,
+    withdrawal_negative_year: float = 100_000,
+    go_back_year: int = 0,
+    n_workers: Optional[int] = None,
+    return_trajectories: bool=False,
+    chunk_size: Optional[int] = None,
+    random_with_real_life_constraints: bool=False,
+    sp500_percentage: float = 1.0,
+    bond_rate: float = 0.04,
+    inflation_rate: float = 0.03,
+    years_without_social_security: int = 35,
+    social_security_money: float = 0,
+    years_with_supplemental_income: int = 0,
+    supplemental_income: float = 0,
 ):
     # Load returns from your file (same as before)
     start_time = time.time()
@@ -271,7 +289,7 @@ def run_simulation_mp(
     df = df.dropna()
     df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
     annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
-    returns = annual.pct_change().dropna().to_numpy()
+    returns: np.ndarray = annual.pct_change().dropna().to_numpy()
     total_years = len(returns)
     if n_workers is None:
         n_workers = max(1, cpu_count() - 1)  # leave one core for OS/other tasks
@@ -310,6 +328,8 @@ def run_simulation_mp(
             inflation_rate,
             years_without_social_security,
             social_security_money,
+            years_with_supplemental_income,
+            supplemental_income,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
