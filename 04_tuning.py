@@ -8,20 +8,20 @@ STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilize
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE_RANGE = (3_000_000, 7_000_000)
+INITIAL_BALANCE_RANGE = (4_000_000, 10_000_000)
 INITIAL_BALANCE_STEP = 200_000
-WITHDRAWAL_RANGE = (80_000, 120_000)
+WITHDRAWAL_RANGE = (75_000, 130_000)
 WITHDRAWAL_STEP = 5_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
-WITHDRAWAL_NEGATIVE_STEP = 0.05
+WITHDRAWAL_NEGATIVE_STEP = 0.02
 N_SIMS_RANGE = (50_000, 500_000)
 STEP_N_SIMS = 50_000
-TRIAL_COUNT = 200
+TRIAL_COUNT = 250
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v100"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v107"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
 )
-REAL_LIFE_CONSTRAINTS = True
+REAL_LIFE_CONSTRAINTS = False
 RETIREMENT_YEARS = 40
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
@@ -30,29 +30,32 @@ INFLATION_RATE = 0.03 # Vanguard projection 10 years worse case as of November 2
 BOND_RATE = 0.03  # Bond rate for 2 years as of November 2025: 0.034
 
 YEARS_WITHOUT_SOCIAL_SECURITY = 20
-SOCIAL_SECURITY_MONEY = 40_000  # per year
+SOCIAL_SECURITY_MONEY = 50_000  # per year
+
+YEARS_WITH_SUPPLEMENTAL_INCOME = 12 # Spouse working
+SUPPLEMENTAL_INCOME = 30_000  # per year
 
 def objective(trial):
     # Suggest both initial balance and withdrawal amount
-    initial_balance = trial.suggest_float(
+    initial_balance: float = trial.suggest_float(
         "initial_balance", *INITIAL_BALANCE_RANGE, step=INITIAL_BALANCE_STEP
     )
-    withdrawal = trial.suggest_float(
+    withdrawal: float = trial.suggest_float(
         "withdrawal", *WITHDRAWAL_RANGE, step=WITHDRAWAL_STEP
     )
-    withdrawal_percentage_when_negative_year = trial.suggest_float(
+    withdrawal_percentage_when_negative_year: float = trial.suggest_float(
         "withdrawal_percentage_when_negative_year",
         WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE[0],
         WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE[1],
         step=WITHDRAWAL_NEGATIVE_STEP,
     )
-    withdrawal_negative_year = trial.suggest_float(
+    withdrawal_negative_year: float = trial.suggest_float(
         "withdrawal_negative_year",
         withdrawal * withdrawal_percentage_when_negative_year,
         withdrawal,
         step=WITHDRAWAL_STEP,
     )
-    sp500_percentage = trial.suggest_float(
+    sp500_percentage: float = trial.suggest_float(
         "sp500_percentage",
         PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN,
         PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX,
@@ -78,6 +81,8 @@ def objective(trial):
             inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
+            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
+            supplemental_income=SUPPLEMENTAL_INCOME,
         )
 
         std_error = simulation_data.std_error
@@ -126,7 +131,7 @@ def objective(trial):
     final_balance_growth_ratios_median = float(np.median(final_balance_growth_ratios))
 
     # Probability term (differentiates high 0.9–1 range)
-    prob_term = exponential(prob_success, 0.95, 1.0, 7)
+    prob_term = exponential(prob_success, 0.99, 1.0, 7)
 
     # Encourage higher withdrawals slightly
     withdrawal_term = exponential(withdrawal, *WITHDRAWAL_RANGE, 8)
@@ -149,11 +154,11 @@ def objective(trial):
     )
 
     score = (
-        prob_term * 0.40
-        + withdrawal_term * 0.25
-        + initial_balance_term * 0.05
-        + withdrawal_diff_ratio_term * 0.05
-        + final_balance_term * 0.25
+        prob_term * 0.50
+        + withdrawal_term * 0.15
+        + initial_balance_term * 0.10
+        + withdrawal_diff_ratio_term * 0.10
+        + final_balance_term * 0.15
     )
 
     # Save diagnostics so we can inspect importance of each term
@@ -209,6 +214,8 @@ if __name__ == "__main__":
     print(
         f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
     )
+    print(f"  Social Security starts after {YEARS_WITHOUT_SOCIAL_SECURITY} years, amount: ${SOCIAL_SECURITY_MONEY:,} per year")
+    print(f"  Supplemental Income for {YEARS_WITH_SUPPLEMENTAL_INCOME} years, amount: ${SUPPLEMENTAL_INCOME:,} per year")
     print("\n~~~~~Score Details~~~~~")
     print("Score Components:")
     print(
