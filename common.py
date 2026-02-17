@@ -108,7 +108,7 @@ class SimulationData:
 
             consecutive_year_lost = np.all(
                 windows, axis=2
-            )  # shape: (n_sims, n_years - 3)
+            )  # shape: (n_sims, n_years - window_size + 1)
 
             sim_with_year_neg = np.any(consecutive_year_lost, axis=1)
 
@@ -279,7 +279,56 @@ def run_simulation_mp(
     social_security_money: float = 0,
     years_with_supplemental_income: int = 0,
     supplemental_income: float = 0,
+    random_seed: Optional[int] = None,
 ):
+    """
+    Run Monte Carlo retirement portfolio simulations using multiprocessing.
+
+    KEY ASSUMPTIONS:
+    1. Withdrawals occur at the START of each year (before portfolio growth)
+       This is more conservative than withdrawing at year-end.
+
+    2. Portfolio allocation is LINEAR and rebalanced annually:
+       return = sp500_percentage * stock_return + (1 - sp500_percentage) * bond_rate
+       This assumes perfect rebalancing to target allocation each year.
+
+    3. Bond returns are FIXED at bond_rate each year (no variability)
+       Stock returns use historical data with actual volatility.
+
+    4. All amounts (withdrawals, income) are adjusted for inflation annually
+       using compound inflation: amount * (1 + inflation_rate)^year
+
+    5. Income sources reduce portfolio withdrawals (not added to balance)
+       Net withdrawal = max(0, withdrawal - social_security - supplemental_income)
+
+    6. Sampling modes:
+       - Unconstrained: Random selection with replacement from historical returns
+       - Constrained: Limits consecutive negative/positive years and cumulative changes
+         to prevent unrealistic "perfect storm" or "perfect boom" scenarios
+
+    Parameters:
+        n_sims: Number of simulation runs
+        n_years: Retirement duration in years
+        initial_balance: Starting portfolio value ($)
+        withdrawal: Annual withdrawal in positive market years ($)
+        withdrawal_negative_year: Annual withdrawal in negative market years ($)
+        go_back_year: Number of early years where balance resets to initial if it drops below
+        n_workers: Number of worker processes (default: cpu_count - 1)
+        return_trajectories: If True, return full year-by-year trajectories
+        chunk_size: Simulations per worker chunk (default: auto-calculated)
+        random_with_real_life_constraints: Use constrained sampling vs pure random
+        sp500_percentage: Fraction of portfolio in stocks (0.0 to 1.0)
+        bond_rate: Annual bond return rate (e.g., 0.04 for 4%)
+        inflation_rate: Annual inflation rate (e.g., 0.03 for 3%)
+        years_without_social_security: Years until social security starts
+        social_security_money: Annual social security income ($, before inflation)
+        years_with_supplemental_income: Number of years with supplemental income
+        supplemental_income: Annual supplemental income ($, before inflation)
+        random_seed: Optional seed for reproducibility (None = random)
+
+    Returns:
+        SimulationData object containing results, statistics, and optional trajectories
+    """
     # Load returns from your file (same as before)
     start_time = time.time()
     file_path = "data/ie_data.xls"
@@ -291,6 +340,51 @@ def run_simulation_mp(
     annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
     returns: np.ndarray = annual.pct_change().dropna().to_numpy()
     total_years = len(returns)
+
+    # Input validation
+    if n_sims <= 0:
+        raise ValueError(f"n_sims must be positive, got {n_sims}")
+    if n_years <= 0:
+        raise ValueError(f"n_years must be positive, got {n_years}")
+    if n_years > total_years:
+        raise ValueError(
+            f"n_years ({n_years}) cannot exceed available historical data ({total_years} years)"
+        )
+    if initial_balance <= 0:
+        raise ValueError(f"initial_balance must be positive, got {initial_balance}")
+    if withdrawal < 0:
+        raise ValueError(f"withdrawal cannot be negative, got {withdrawal}")
+    if withdrawal_negative_year < 0:
+        raise ValueError(
+            f"withdrawal_negative_year cannot be negative, got {withdrawal_negative_year}"
+        )
+    if withdrawal_negative_year > withdrawal:
+        import warnings
+        warnings.warn(
+            f"withdrawal_negative_year ({withdrawal_negative_year}) > withdrawal ({withdrawal}). "
+            "This means withdrawing MORE in down markets, which is unusual."
+        )
+    if not 0 <= sp500_percentage <= 1:
+        raise ValueError(
+            f"sp500_percentage must be between 0 and 1, got {sp500_percentage}"
+        )
+    if go_back_year < 0:
+        raise ValueError(f"go_back_year cannot be negative, got {go_back_year}")
+    if years_without_social_security < 0:
+        raise ValueError(
+            f"years_without_social_security cannot be negative, got {years_without_social_security}"
+        )
+    if social_security_money < 0:
+        raise ValueError(
+            f"social_security_money cannot be negative, got {social_security_money}"
+        )
+    if years_with_supplemental_income < 0:
+        raise ValueError(
+            f"years_with_supplemental_income cannot be negative, got {years_with_supplemental_income}"
+        )
+    if supplemental_income < 0:
+        raise ValueError(f"supplemental_income cannot be negative, got {supplemental_income}")
+
     if n_workers is None:
         n_workers = max(1, cpu_count() - 1)  # leave one core for OS/other tasks
 
@@ -302,7 +396,13 @@ def run_simulation_mp(
     # Create the task list of (chunk_size, seed, return_trajectories)
     tasks = []
     remaining = n_sims
-    seed_base = np.random.SeedSequence().entropy  # base entropy
+
+    # Use provided seed for reproducibility, or generate random seed
+    if random_seed is not None:
+        seed_base = random_seed
+    else:
+        seed_base = np.random.SeedSequence().entropy  # base entropy
+
     worker_seed = int(seed_base) & 0x7FFFFFFF
     i = 0
     while remaining > 0:
@@ -386,7 +486,32 @@ def run_simulation_historical_real(
     go_back_year=0,
     return_trajectories=False,
     inflation_rate=0.03,
+    sp500_percentage=1.0,
+    bond_rate=0.04,
+    years_without_social_security=45,
+    social_security_money=0,
+    years_with_supplemental_income=0,
+    supplemental_income=0,
 ):
+    """
+    Run historical rolling-window backtesting using actual market sequences.
+
+    Uses every possible n_year window from historical data to test portfolio survival.
+    For example, with 150 years of data and n_years=45, runs 106 simulations
+    (starting years 1871, 1872, ..., 1976 if data ends in 2020).
+
+    This tests "what would have happened if you retired in year X" for all X.
+    Uses the SAME assumptions as run_simulation_mp() for consistency.
+
+    Identifies which historical starting years would have led to portfolio failure,
+    providing concrete examples of challenging market environments.
+
+    Parameters:
+        (Same as run_simulation_mp, except no random_seed since order is deterministic)
+
+    Returns:
+        SimulationData object with results from all rolling windows
+    """
     start_time = time.time()
 
     # --- Load and prepare historical data ---
@@ -412,6 +537,26 @@ def run_simulation_historical_real(
         else None
     )
 
+    # Precompute inflation factors for each year
+    inflation_factors = (1.0 + inflation_rate) ** np.arange(n_years)
+
+    # Ensure sp500_percentage is between 0 and 1
+    sp500_frac = np.clip(sp500_percentage, 0.0, 1.0)
+    bond_frac = 1.0 - sp500_frac
+
+    # Determine the amount of social security to add each year
+    social_security_per_year = np.zeros(n_years, dtype=np.float64)
+    if social_security_money > 0:
+        years_with_ss = max(0, n_years - years_without_social_security)
+        if years_with_ss > 0:
+            social_security_per_year[-years_with_ss:] = social_security_money * inflation_factors[-years_with_ss:]
+
+    # Add supplemental income if applicable
+    supplemental_income_per_year = np.zeros(n_years, dtype=np.float64)
+    if supplemental_income > 0:
+        years_with_supplemental = min(years_with_supplemental_income, n_years)
+        supplemental_income_per_year[:years_with_supplemental] = supplemental_income * inflation_factors[:years_with_supplemental]
+
     # --- Run each simulation sequentially ---
     for i, start in enumerate(start_indices):
         sim_returns = returns[start : start + n_years]
@@ -421,15 +566,26 @@ def run_simulation_historical_real(
             trajectories[i, 0] = balance
 
         for t in range(n_years):
-            withdrawal_t = (
-                withdrawal if sim_returns[t] >= 0 else withdrawal_negative_year
-            )
-            withdrawal_t = float(withdrawal_t) * ((1 + inflation_rate) ** t)
-            balance = (balance - withdrawal_t) * (1.0 + sim_returns[t])
+            # Determine withdrawals depending on market return
+            withdrawal_t = withdrawal if sim_returns[t] >= 0 else withdrawal_negative_year
+            withdrawal_t = float(withdrawal_t) * inflation_factors[t]
 
+            # Reduce portfolio withdrawal by social security and supplemental income
+            ss_amount = social_security_per_year[t]
+            supp_amount = supplemental_income_per_year[t]
+            withdrawal_t = max(withdrawal_t - ss_amount - supp_amount, 0.0)
+
+            # Compute portfolio growth using linear allocation
+            portfolio_growth = 1 + sp500_frac * sim_returns[t] + bond_frac * bond_rate
+
+            # Update balance after withdrawals and growth
+            balance = (balance - withdrawal_t) * portfolio_growth
+
+            # Reset balance to initial if it drops below initial balance in early years
             if t < go_back_year and balance < initial_balance:
                 balance = initial_balance
 
+            # Apply floor at zero
             balance = max(balance, 0.0)
 
             if return_trajectories:
@@ -443,16 +599,17 @@ def run_simulation_historical_real(
         f"Simulation of {n_sims:,} rolling windows ({n_years} years each) took {end_time - start_time:.2f} seconds."
     )
 
-    # Find indices of simulations that ended below zero
-    failed_indices = np.where(trajectories[:, -1] <= 0)[0]
-    # Map each failed simulation index to its starting year
-    first_year = annual.index[0]
-    last_year = annual.index[-1] - n_years + 1
-    years = np.arange(first_year, last_year + 1)
-    starting_years = years[failed_indices]
-    # Print the starting year of each failed trajectory
-    for y in starting_years:
-        print(f"Simulation starting in {y} failed (ending balance ≤ 0).")
+    # Find indices of simulations that ended below zero (only if we have trajectories)
+    if return_trajectories and trajectories is not None:
+        failed_indices = np.where(trajectories[:, -1] <= 0)[0]
+        # Map each failed simulation index to its starting year
+        first_year = annual.index[0]
+        last_year = annual.index[-1] - n_years + 1
+        years = np.arange(first_year, last_year + 1)
+        starting_years = years[failed_indices]
+        # Print the starting year of each failed trajectory
+        for y in starting_years:
+            print(f"Simulation starting in {y} failed (ending balance ≤ 0).")
 
     return SimulationData(
         initial_balance,

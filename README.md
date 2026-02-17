@@ -26,6 +26,9 @@ uv run 03_historical_value.py
 
 ```sh
 uv run 04_tuning.py
+# or
+uv run 04_tuning_improved.py
+
 uv run optuna-dashboard sqlite:///db.sqlite3
 ```
 
