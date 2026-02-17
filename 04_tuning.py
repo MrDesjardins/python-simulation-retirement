@@ -110,12 +110,9 @@ def objective(trial):
     # Already between 0 and 1
     prob_success = float(simulation_data.probability_of_success)
 
+    # final_balances is always 1D array of ending balances
     final_balances = simulation_data.final_balances
-    if final_balances.ndim == 2:
-        last_year_balances = final_balances[:, -1]
-    else:
-        last_year_balances = final_balances
-    final_balance_growth_ratios = last_year_balances / initial_balance
+    final_balance_growth_ratios = final_balances / initial_balance
 
     # Robust statistics for scaling (avoid per-trial min/max and outliers):
     # use percentile bounds so mapping is stable across similar trials
