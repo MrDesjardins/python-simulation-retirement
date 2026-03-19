@@ -30,6 +30,7 @@ uv run 04_tuning.py
 uv run 04_tuning_improved.py
 
 uv run optuna-dashboard sqlite:///db.sqlite3
+uv run optuna-dashboard sqlite:///db_05.sqlite3
 ```
 
 
