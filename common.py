@@ -124,6 +124,71 @@ class SimulationData:
             )
 
 
+def format_withdrawal_breakdown(
+    *,
+    withdrawal: float,
+    withdrawal_negative_year: float,
+    supplemental_income: float,
+    years_with_supplemental_income: int,
+    social_security_money: float,
+    years_without_social_security: int,
+    n_years: int,
+) -> list[str]:
+    """Return lines describing net portfolio withdrawals by retirement period."""
+    boundaries: set[int] = {1, n_years + 1}
+    if supplemental_income > 0 and years_with_supplemental_income < n_years:
+        boundaries.add(years_with_supplemental_income + 1)
+    if social_security_money > 0 and years_without_social_security < n_years:
+        boundaries.add(years_without_social_security + 1)
+
+    sorted_bounds = sorted(boundaries)
+    show_neg = withdrawal_negative_year != withdrawal
+
+    lines: list[str] = []
+    lines.append("  Portfolio Withdrawal Breakdown (before inflation):")
+
+    for i in range(len(sorted_bounds) - 1):
+        yr_start = sorted_bounds[i]
+        yr_end = min(sorted_bounds[i + 1] - 1, n_years)
+        if yr_start > n_years:
+            break
+
+        has_supp = supplemental_income > 0 and yr_start <= years_with_supplemental_income
+        has_ss = social_security_money > 0 and yr_start > years_without_social_security
+
+        income_parts: list[str] = []
+        total_income = 0.0
+        if has_supp:
+            income_parts.append(f"${supplemental_income:,.0f} supplemental")
+            total_income += supplemental_income
+        if has_ss:
+            income_parts.append(f"${social_security_money:,.0f} SS")
+            total_income += social_security_money
+
+        net = max(withdrawal - total_income, 0)
+        net_neg = max(withdrawal_negative_year - total_income, 0)
+
+        period = (
+            f"Years {yr_start}-{yr_end}"
+            if yr_start != yr_end
+            else f"Year {yr_start}"
+        )
+
+        if total_income > 0:
+            income_str = " + ".join(income_parts)
+            line = f"    {period}: ${withdrawal:,.0f} - {income_str} = ${net:,.0f} from portfolio"
+            if show_neg:
+                line += f" (neg yr: ${net_neg:,.0f})"
+        else:
+            line = f"    {period}: ${withdrawal:,.0f} from portfolio"
+            if show_neg:
+                line += f" (neg yr: ${withdrawal_negative_year:,.0f})"
+
+        lines.append(line)
+
+    return lines
+
+
 # global to be set in initializer
 _RETURNS: np.ndarray
 _N_YEARS: int 
@@ -330,7 +395,6 @@ def run_simulation_mp(
         SimulationData object containing results, statistics, and optional trajectories
     """
     # Load returns from your file (same as before)
-    start_time = time.time()
     file_path = "data/ie_data.xls"
     df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
     df = df.iloc[:, [0, 9]]
@@ -401,7 +465,7 @@ def run_simulation_mp(
     if random_seed is not None:
         seed_base = random_seed
     else:
-        seed_base = np.random.SeedSequence().entropy  # base entropy
+        seed_base = int(np.random.default_rng().integers(0, 2**31 - 1))
 
     worker_seed = int(seed_base) & 0x7FFFFFFF
     i = 0

@@ -1,0 +1,98 @@
+{
+  "study_name": "target_budget_study_v7",
+  "storage_url": "sqlite:///db_05.sqlite3",
+  "fixed_config": {
+    "script": "05_target_year_budget.py",
+    "STD_ERROR_DIFF_THRESHOLD": 0.01,
+    "STD_ERROR_ACCEPTANCE": 0.005,
+    "INITIAL_BALANCE": 3700000,
+    "WITHDRAWAL_RANGE": [
+      90000,
+      120000
+    ],
+    "WITHDRAWAL_STEP": 2000,
+    "WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE": [
+      0.9,
+      1.0
+    ],
+    "WITHDRAWAL_NEGATIVE_STEP": 0.01,
+    "N_SIMS_RANGE": [
+      50000,
+      1000000
+    ],
+    "STEP_N_SIMS": 50000,
+    "TRIAL_COUNT": 1000,
+    "STORAGE_PATH": "sqlite:///db_05.sqlite3",
+    "STUDY_NAME": "target_budget_study_v7",
+    "REAL_LIFE_CONSTRAINTS": false,
+    "RETIREMENT_YEARS": 40,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN": 0.7,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX": 1.0,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP": 0.05,
+    "INFLATION_RATE": 0.03,
+    "BOND_RATE": 0.03,
+    "YEARS_WITHOUT_SOCIAL_SECURITY": 20,
+    "SOCIAL_SECURITY_MONEY": 40000,
+    "YEARS_WITH_SUPPLEMENTAL_INCOME": 15,
+    "SUPPLEMENTAL_INCOME": 18000,
+    "OPTIMIZATION_RANDOM_SEED": null,
+    "OBJECTIVE_WEIGHTS": {
+      "prob_success": 0.55,
+      "withdrawal": 0.2,
+      "withdrawal_consistency": 0.1,
+      "final_balance": 0.15
+    },
+    "PROB_THRESHOLD_MIN": 0.95,
+    "PROB_THRESHOLD_MAX": 1.0,
+    "PROB_THRESHOLD_STEEPNESS": 6,
+    "MIN_ACCEPTABLE_PROB": 0.85,
+    "PRUNER_MEDIAN_N_STARTUP_TRIALS": 5,
+    "PRUNER_MEDIAN_N_WARMUP_STEPS": 1,
+    "FINAL_VALIDATION_N_SIMS": 1000000
+  },
+  "wall_time_sec": 184.01330806799524,
+  "aggregates": {
+    "total_trials": 1000,
+    "state_counts": {
+      "COMPLETE": 332,
+      "PRUNED": 668
+    },
+    "complete": 332,
+    "pruned": 668,
+    "fail": 0,
+    "total_n_sims": 50250000,
+    "total_n_sims_from_df": 50250000
+  },
+  "best": {
+    "trial_number": 805,
+    "params": {
+      "withdrawal": 96000.0,
+      "withdrawal_percentage_when_negative_year": 0.9,
+      "sp500_percentage": 0.7
+    },
+    "user_attrs": {
+      "final_balance_term": 0.9972836101294367,
+      "final_relative_balance_to_median": 5.891920985661335,
+      "n_sims_used": 50000,
+      "prob_success": 0.98724,
+      "prob_term": 0.9909953710581852,
+      "score": 0.9524811471600851,
+      "withdrawal_diff_ratio_term": 0.9816689041034551,
+      "withdrawal_negative_year": 86400.0,
+      "withdrawal_term": 0.7983713057416106
+    },
+    "value": 0.9524811471600851
+  },
+  "validation": {
+    "n_sims": 1000000,
+    "probability_of_success": 0.98587,
+    "std_final": 27074562.276365355,
+    "std_error": 27074.562276365356,
+    "mean_final_balance": 29358558.441984925,
+    "median_final_balance": 21912675.076366518,
+    "initial_balance": 3700000.0,
+    "withdrawal": 96000.0,
+    "withdrawal_negative_year": 86400.0,
+    "n_years": 40
+  }
+}

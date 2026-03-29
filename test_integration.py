@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Integration test to verify all fixes work correctly together."""
 
+import numpy as np
+
 from common import run_simulation_mp, run_simulation_historical_real
 
 print("=" * 60)
@@ -43,7 +45,6 @@ result2 = run_simulation_mp(
     years_with_supplemental_income=10,
 )
 
-import numpy as np
 if np.array_equal(result1.final_balances, result2.final_balances):
     print("✓ Reproducibility verified - identical results with same seed!")
 else:
@@ -76,7 +77,7 @@ result4 = run_simulation_mp(
     random_with_real_life_constraints=True,
     random_seed=123,
 )
-print(f"✓ Constrained sampling completed successfully")
+print("✓ Constrained sampling completed successfully")
 print(f"✓ Probability of success: {result4.probability_of_success:.2%}")
 
 # Test 5: Input validation

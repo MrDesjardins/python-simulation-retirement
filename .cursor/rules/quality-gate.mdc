@@ -1,0 +1,16 @@
+---
+description: Require clean Ruff and mypy before task completion
+globs:
+alwaysApply: true
+---
+
+# Quality Gate
+
+Before completing any task that changes code in this repository:
+
+- Run `uv run ruff check .`.
+- Run `uv run mypy .`.
+- Fix all reported issues in the changed code before marking the task complete.
+- Do not skip these checks because a change seems small.
+
+If `mypy` is missing from the environment, install or add it first so the check can run.

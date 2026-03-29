@@ -1,25 +1,33 @@
 import time
 import optuna
 import numpy as np
-from common import exponential, inverse_exponential, run_simulation_mp
+from common import exponential, format_withdrawal_breakdown, inverse_exponential, run_simulation_mp
+from tuning_run_results import (
+    build_run_results,
+    export_run_results_sidecars,
+    safe_best_trial,
+    simulation_data_summary,
+    trials_to_dataframe,
+)
 
 # Thresholds for adaptive simulation
 STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilizes
 STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
 
 # Constants
-INITIAL_BALANCE = 3_600_000  # Fixed — this is the known starting capital
-WITHDRAWAL_RANGE = (60_000, 120_000)
-WITHDRAWAL_STEP = 2_500
+INITIAL_BALANCE = 3_700_000  # Fixed — this is the known starting capital
+WITHDRAWAL_RANGE = (90_000, 120_000)
+WITHDRAWAL_STEP = 2_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.90, 1.0)
 WITHDRAWAL_NEGATIVE_STEP = 0.01
 N_SIMS_RANGE = (50_000, 1_000_000)
 STEP_N_SIMS = 50_000
-TRIAL_COUNT = 3_000
+TRIAL_COUNT = 1_000 # Higher trial count is more accurate, but slower (5,000 is for testing, 20,000 is for production)
 STORAGE_PATH = "sqlite:///db_05.sqlite3"  # Separate DB — does not affect study 04
 STUDY_NAME = (
-    "target_budget_study_v3"  # Independent study from retirement_tuning_study_*
+    "target_budget_study_v7"  # Independent study from retirement_tuning_study_*
 )
+RESULTS_JSON_PATH = f"results/{STUDY_NAME}_meta.json"
 REAL_LIFE_CONSTRAINTS = False
 RETIREMENT_YEARS = 40
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
@@ -32,7 +40,7 @@ YEARS_WITHOUT_SOCIAL_SECURITY = 20
 SOCIAL_SECURITY_MONEY = 40_000  # per year
 
 YEARS_WITH_SUPPLEMENTAL_INCOME = 15  # Spouse working
-SUPPLEMENTAL_INCOME = 20_000  # per year
+SUPPLEMENTAL_INCOME = 18_000  # per year
 
 # Random seed configuration
 # Set to None for production (explore different market scenarios each trial)
@@ -44,9 +52,9 @@ OPTIMIZATION_RANDOM_SEED = None  # None = explore different futures (RECOMMENDED
 # Emphasis shifted toward withdrawal (main goal) and probability of success (safety)
 OBJECTIVE_WEIGHTS = {
     "prob_success": 0.55,          # Probability of portfolio survival — primary safety constraint
-    "withdrawal": 0.25,            # Higher withdrawals preferred — this is the main goal
+    "withdrawal": 0.20,            # Higher withdrawals preferred — this is the main goal
     "withdrawal_consistency": 0.10, # Consistent withdrawals in good/bad years
-    "final_balance": 0.10,         # Better ending balance preferred
+    "final_balance": 0.15,         # Better ending balance preferred
 }
 
 # Probability threshold range
@@ -240,8 +248,8 @@ if __name__ == "__main__":
 
     study.optimize(objective, n_trials=TRIAL_COUNT, n_jobs=1)
 
-    best_trial = study.best_trial
-    best_params = best_trial.params
+    trials_df = trials_to_dataframe(study)
+    best_trial = safe_best_trial(study)
 
     # Summary statistics
     sum_n_sims_all_trials = sum(
@@ -257,7 +265,7 @@ if __name__ == "__main__":
     total_combinations = n_withdrawal * n_withdrawal_pct * n_sp500
     explored_pct = len(study.trials) / total_combinations * 100
 
-    print(f"\n=== Optimization Summary ===")
+    print("\n=== Optimization Summary ===")
     print(f"Total trials run: {len(study.trials)}")
     print(f"  - Completed: {len(completed_trials)}")
     print(f"  - Pruned (stopped early): {pruned_count}")
@@ -266,67 +274,133 @@ if __name__ == "__main__":
     print(f"Parameter space explored: {explored_pct:.1f}% ({len(study.trials):,} trials / {total_combinations:,} combinations)")
     print(f"  - withdrawal: {n_withdrawal} values, withdrawal_pct: {n_withdrawal_pct} values, sp500: {n_sp500} values")
 
-    withdrawal_negative_year = (
-        best_params["withdrawal"]
-        * best_params["withdrawal_percentage_when_negative_year"]
-    )
-
-    print(f"\n=== Optimization Results for {STUDY_NAME} ===")
-    print(f"Best Trial #{best_trial.number}")
-    print(f"  Initial Balance (fixed): ${INITIAL_BALANCE:,}")
-    print(f"  Withdrawal: ${best_params['withdrawal']:,}")
-    print(f"  Withdrawal Negative Year: ${withdrawal_negative_year:,}")
-    print(f"  Withdrawal ratio: {best_params['withdrawal_percentage_when_negative_year']:.2f}")
-    print(f"  Withdrawal as % of initial balance: {best_params['withdrawal'] / INITIAL_BALANCE:.2%}")
-    print(f"  Retirement years: {RETIREMENT_YEARS} years")
-    print(f"  Random with real life constraints: {'Yes' if REAL_LIFE_CONSTRAINTS else 'No'}")
-    print(
-        f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
-    )
-    print(f"  Social Security starts after {YEARS_WITHOUT_SOCIAL_SECURITY} years, amount: ${SOCIAL_SECURITY_MONEY:,} per year")
-    print(f"  Supplemental Income for {YEARS_WITH_SUPPLEMENTAL_INCOME} years, amount: ${SUPPLEMENTAL_INCOME:,} per year")
-    print("\n~~~~~Score Details~~~~~")
-    print("Score Components:")
-    print(f"  Probability of Success: {best_trial.user_attrs['prob_success'] * 100:.2f}%")
-    print(f"  Final Score: {best_trial.user_attrs['score']:.2%}")
-    print(f"  Simulations used for best trial: {best_trial.user_attrs['n_sims_used']:,}")
-    print(f"  Total simulations (all {len(study.trials)} trials): {sum_n_sims_all_trials:,}")
-    print(f"  Median relative final balance: {best_trial.user_attrs['final_relative_balance_to_median']:.2%} of initial balance")
-    print("\nObjective Terms:")
-    print(f"  Prob Success: {best_trial.user_attrs['prob_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['prob_success']:.2f})")
-    print(f"  Withdrawal: {best_trial.user_attrs['withdrawal_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['withdrawal']:.2f})")
-    print(f"  Withdraw Consistency: {best_trial.user_attrs['withdrawal_diff_ratio_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['withdrawal_consistency']:.2f})")
-    print(f"  Final Balance: {best_trial.user_attrs['final_balance_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['final_balance']:.2f})")
-
-    FINAL_VALIDATION_N_SIMS = 1_000_000
-    print(f"\n~~~~~Running final validation simulation ({FINAL_VALIDATION_N_SIMS:,} sims)~~~~~")
-    final_data = run_simulation_mp(
-        n_sims=FINAL_VALIDATION_N_SIMS,
-        initial_balance=INITIAL_BALANCE,
-        withdrawal=best_params["withdrawal"],
-        withdrawal_negative_year=withdrawal_negative_year,
-        random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
-        sp500_percentage=best_params["sp500_percentage"],
-        bond_rate=BOND_RATE,
-        n_years=RETIREMENT_YEARS,
-        inflation_rate=INFLATION_RATE,
-        years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
-        social_security_money=SOCIAL_SECURITY_MONEY,
-        years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
-        supplemental_income=SUPPLEMENTAL_INCOME,
-        random_seed=OPTIMIZATION_RANDOM_SEED,
-    )
-    print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
-    print(f"Standard Deviation: ${final_data.std_final:,.0f}")
-    print(f"Standard error: ${final_data.std_error:,.0f}")
-
-    mean_final = final_data.final_balances.mean()
-    if mean_final > 0:
-        print(f"Relative Standard Error: {final_data.std_error / mean_final:.3%}")
+    validation_summary = None
+    if best_trial is None:
+        print(f"\n=== No completed trials in {STUDY_NAME} — skipping best-trial report ===")
     else:
-        print(f"Relative Standard Error: N/A (mean balance is zero)")
+        best_params = best_trial.params
+        withdrawal_negative_year = (
+            best_params["withdrawal"]
+            * best_params["withdrawal_percentage_when_negative_year"]
+        )
 
-    final_data.print_stats()
+        print(f"\n=== Optimization Results for {STUDY_NAME} ===")
+        print(f"Best Trial #{best_trial.number}")
+        print(f"  Initial Balance (fixed): ${INITIAL_BALANCE:,}")
+        print(f"  Withdrawal (total spending need): ${best_params['withdrawal']:,}")
+        print(f"  Withdrawal Negative Year: ${withdrawal_negative_year:,}")
+        print(f"  Withdrawal ratio: {best_params['withdrawal_percentage_when_negative_year']:.2f}")
+        print(f"  Withdrawal as % of initial balance: {best_params['withdrawal'] / INITIAL_BALANCE:.2%}")
+        print(f"  Retirement years: {RETIREMENT_YEARS} years")
+        print(f"  Random with real life constraints: {'Yes' if REAL_LIFE_CONSTRAINTS else 'No'}")
+        print(
+            f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
+        )
+        print(f"  Social Security starts after {YEARS_WITHOUT_SOCIAL_SECURITY} years, amount: ${SOCIAL_SECURITY_MONEY:,} per year")
+        print(f"  Supplemental Income for {YEARS_WITH_SUPPLEMENTAL_INCOME} years, amount: ${SUPPLEMENTAL_INCOME:,} per year")
+        for line in format_withdrawal_breakdown(
+            withdrawal=best_params["withdrawal"],
+            withdrawal_negative_year=withdrawal_negative_year,
+            supplemental_income=SUPPLEMENTAL_INCOME,
+            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
+            social_security_money=SOCIAL_SECURITY_MONEY,
+            years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
+            n_years=RETIREMENT_YEARS,
+        ):
+            print(line)
+        print("\n~~~~~Score Details~~~~~")
+        print("Score Components:")
+        print(f"  Probability of Success: {best_trial.user_attrs['prob_success'] * 100:.2f}%")
+        print(f"  Final Score: {best_trial.user_attrs['score']:.2%}")
+        print(f"  Simulations used for best trial: {best_trial.user_attrs['n_sims_used']:,}")
+        print(f"  Total simulations (all {len(study.trials)} trials): {sum_n_sims_all_trials:,}")
+        print(f"  Median relative final balance: {best_trial.user_attrs['final_relative_balance_to_median']:.2%} of initial balance")
+        print("\nObjective Terms:")
+        print(f"  Prob Success: {best_trial.user_attrs['prob_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['prob_success']:.2f})")
+        print(f"  Withdrawal: {best_trial.user_attrs['withdrawal_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['withdrawal']:.2f})")
+        print(f"  Withdraw Consistency: {best_trial.user_attrs['withdrawal_diff_ratio_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['withdrawal_consistency']:.2f})")
+        print(f"  Final Balance: {best_trial.user_attrs['final_balance_term']:.4f} (weight: {OBJECTIVE_WEIGHTS['final_balance']:.2f})")
+
+        FINAL_VALIDATION_N_SIMS = 1_000_000
+        print(f"\n~~~~~Running final validation simulation ({FINAL_VALIDATION_N_SIMS:,} sims)~~~~~")
+        final_data = run_simulation_mp(
+            n_sims=FINAL_VALIDATION_N_SIMS,
+            initial_balance=INITIAL_BALANCE,
+            withdrawal=best_params["withdrawal"],
+            withdrawal_negative_year=withdrawal_negative_year,
+            random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
+            sp500_percentage=best_params["sp500_percentage"],
+            bond_rate=BOND_RATE,
+            n_years=RETIREMENT_YEARS,
+            inflation_rate=INFLATION_RATE,
+            years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
+            social_security_money=SOCIAL_SECURITY_MONEY,
+            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
+            supplemental_income=SUPPLEMENTAL_INCOME,
+            random_seed=OPTIMIZATION_RANDOM_SEED,
+        )
+        print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
+        print(f"Standard Deviation: ${final_data.std_final:,.0f}")
+        print(f"Standard error: ${final_data.std_error:,.0f}")
+
+        mean_final = final_data.final_balances.mean()
+        if mean_final > 0:
+            print(f"Relative Standard Error: {final_data.std_error / mean_final:.3%}")
+        else:
+            print("Relative Standard Error: N/A (mean balance is zero)")
+
+        final_data.print_stats()
+        validation_summary = simulation_data_summary(final_data)
+
     print("\n=== End of optimization ===")
     end_time = time.perf_counter()
-    print(f"Total optimization time: {end_time - start_time:.2f} seconds")
+    wall_time_sec = end_time - start_time
+    print(f"Total optimization time: {wall_time_sec:.2f} seconds")
+
+    fixed_config = {
+        "script": "05_target_year_budget.py",
+        "STD_ERROR_DIFF_THRESHOLD": STD_ERROR_DIFF_THRESHOLD,
+        "STD_ERROR_ACCEPTANCE": STD_ERROR_ACCEPTANCE,
+        "INITIAL_BALANCE": INITIAL_BALANCE,
+        "WITHDRAWAL_RANGE": list(WITHDRAWAL_RANGE),
+        "WITHDRAWAL_STEP": WITHDRAWAL_STEP,
+        "WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE": list(
+            WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE
+        ),
+        "WITHDRAWAL_NEGATIVE_STEP": WITHDRAWAL_NEGATIVE_STEP,
+        "N_SIMS_RANGE": list(N_SIMS_RANGE),
+        "STEP_N_SIMS": STEP_N_SIMS,
+        "TRIAL_COUNT": TRIAL_COUNT,
+        "STORAGE_PATH": STORAGE_PATH,
+        "STUDY_NAME": STUDY_NAME,
+        "REAL_LIFE_CONSTRAINTS": REAL_LIFE_CONSTRAINTS,
+        "RETIREMENT_YEARS": RETIREMENT_YEARS,
+        "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN,
+        "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX,
+        "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP,
+        "INFLATION_RATE": INFLATION_RATE,
+        "BOND_RATE": BOND_RATE,
+        "YEARS_WITHOUT_SOCIAL_SECURITY": YEARS_WITHOUT_SOCIAL_SECURITY,
+        "SOCIAL_SECURITY_MONEY": SOCIAL_SECURITY_MONEY,
+        "YEARS_WITH_SUPPLEMENTAL_INCOME": YEARS_WITH_SUPPLEMENTAL_INCOME,
+        "SUPPLEMENTAL_INCOME": SUPPLEMENTAL_INCOME,
+        "OPTIMIZATION_RANDOM_SEED": OPTIMIZATION_RANDOM_SEED,
+        "OBJECTIVE_WEIGHTS": dict(OBJECTIVE_WEIGHTS),
+        "PROB_THRESHOLD_MIN": PROB_THRESHOLD_MIN,
+        "PROB_THRESHOLD_MAX": PROB_THRESHOLD_MAX,
+        "PROB_THRESHOLD_STEEPNESS": PROB_THRESHOLD_STEEPNESS,
+        "MIN_ACCEPTABLE_PROB": MIN_ACCEPTABLE_PROB,
+        "PRUNER_MEDIAN_N_STARTUP_TRIALS": 5,
+        "PRUNER_MEDIAN_N_WARMUP_STEPS": 1,
+        "FINAL_VALIDATION_N_SIMS": 1_000_000,
+    }
+    RUN_RESULTS = build_run_results(
+        study_name=STUDY_NAME,
+        storage_url=STORAGE_PATH,
+        fixed_config=fixed_config,
+        wall_time_sec=wall_time_sec,
+        trials_df=trials_df,
+        study=study,
+        validation_summary=validation_summary,
+    )
+    export_run_results_sidecars(RUN_RESULTS, json_path=RESULTS_JSON_PATH)

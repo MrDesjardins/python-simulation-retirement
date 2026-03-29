@@ -14,3 +14,8 @@ dependencies = [
     "pytest>=8.4.2",
     "xlrd>=2.0.2",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+]

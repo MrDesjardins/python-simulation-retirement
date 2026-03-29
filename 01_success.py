@@ -6,14 +6,14 @@ from common import run_simulation_mp
 
 start_time = time.perf_counter()
 simulation_data = run_simulation_mp(
-    n_years=40,
+    n_years=45,
     return_trajectories=False,
-    n_sims=10_000_000,
-    initial_balance=4_600_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=100_000,
-    random_with_real_life_constraints=True,
-    sp500_percentage=0.65,
+    n_sims=50_000_000,
+    initial_balance=4_000_000,
+    withdrawal=95_000,
+    withdrawal_negative_year=90_000,
+    random_with_real_life_constraints=False,
+    sp500_percentage=0.7,
     bond_rate=0.03,
     inflation_rate=0.03,
     social_security_money=50_000,
@@ -37,7 +37,7 @@ normal = final_balances[(final_balances > 0) & (final_balances <= cap)]
 overflow = final_balances[final_balances > cap]
 
 # Define bins up to $40M
-bins = np.arange(0, cap + bin_width, bin_width)
+bins = np.arange(0, cap + bin_width, bin_width, dtype=float).tolist()
 
 plt.figure(figsize=(12, 8))
 

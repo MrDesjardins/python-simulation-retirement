@@ -3,16 +3,17 @@
 
 import sys
 import importlib.util
-
-# Load the improved tuning module
-spec = importlib.util.spec_from_file_location(
-    "tuning_improved",
-    "/home/miste/code/python-simulation-retirement/04_tuning_improved.py"
-)
-tuning = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tuning)
+from pathlib import Path
 
 import optuna
+
+# Load the improved tuning module
+module_path = Path(__file__).resolve().with_name("04_tuning_improved.py")
+spec = importlib.util.spec_from_file_location("tuning_improved", module_path)
+if spec is None or spec.loader is None:
+    raise ImportError(f"Unable to load module spec for {module_path}")
+tuning = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tuning)
 
 print("=" * 60)
 print("TESTING IMPROVED TUNING IMPLEMENTATION")

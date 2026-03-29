@@ -3,12 +3,15 @@
 # Data
 
 Download:
+Download:
 
 1. https://shillerdata.com/
 
 # Environment
 
 ```sh
+```sh
+uv init
 uv init
 ``` 
 
@@ -30,7 +33,7 @@ uv run 04_tuning.py
 uv run 04_tuning_improved.py
 
 uv run optuna-dashboard sqlite:///db.sqlite3
-uv run optuna-dashboard sqlite:///db_05.sqlite3
+uv run optuna-dashboard sqlite:///db_05.sqlite3uv run optuna-dashboard sqlite:///db_05.sqlite3
 ```
 
 
