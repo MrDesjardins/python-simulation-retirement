@@ -4,3 +4,6 @@ __pycache__/
 .mypy_cache/
 .env
 __pycache__
+
+# Optuna / local SQLite (regenerated when tuning runs)
+*.sqlite3
