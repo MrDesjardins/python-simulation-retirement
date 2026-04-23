@@ -11,8 +11,10 @@ from tuning_run_results import (
 )
 
 # Thresholds for adaptive simulation
+# Tightened to match 04_tuning_improved.py / 05_target_year_budget.py.
 STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilizes
-STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
+STD_ERROR_ACCEPTANCE = 0.001  # 5x tighter than before (was 0.005)
+MIN_SIMS_FOR_CONVERGENCE = 200_000  # don't accept convergence below this
 
 # Constants
 INITIAL_BALANCE_RANGE = (4_000_000, 10_000_000)
@@ -21,21 +23,22 @@ WITHDRAWAL_RANGE = (75_000, 130_000)
 WITHDRAWAL_STEP = 5_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.80, 1.0)
 WITHDRAWAL_NEGATIVE_STEP = 0.02
-N_SIMS_RANGE = (50_000, 500_000)
+N_SIMS_RANGE = (50_000, 1_500_000)  # higher ceiling for convergence
 STEP_N_SIMS = 50_000
 TRIAL_COUNT = 250
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v107"  # ⚠️ CHANGE EVERYTIME WE CHANGE CONSTANTS OR LOGIC ⚠️
+    "retirement_tuning_study_v108"  # ⚠️ v108: nominal returns, block bootstrap, tighter convergence
 )
 RESULTS_JSON_PATH = f"results/{STUDY_NAME}_meta.json"
-REAL_LIFE_CONSTRAINTS = False
+SAMPLING_MODE = "block_bootstrap"
+BLOCK_BOOTSTRAP_SIZE = 5
 RETIREMENT_YEARS = 40
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.03 # Vanguard projection 10 years worse case as of November 2025: 0.026
-BOND_RATE = 0.03  # Bond rate for 2 years as of November 2025: 0.034
+INFLATION_RATE = 0.036  # Unified across all simulations (see 05_target_year_budget.py)
+BOND_RATE = 0.036  # Nominal; earns 0% real at equal inflation — conservative
 
 YEARS_WITHOUT_SOCIAL_SECURITY = 20
 SOCIAL_SECURITY_MONEY = 50_000  # per year
@@ -80,7 +83,8 @@ def objective(trial):
         simulation_data = run_simulation_mp(
             n_sims=n_sims,
             initial_balance=initial_balance,
-            random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
+            sampling_mode=SAMPLING_MODE,
+            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             withdrawal=withdrawal,
             withdrawal_negative_year=withdrawal_negative_year,
             n_years=RETIREMENT_YEARS,
@@ -102,10 +106,14 @@ def objective(trial):
 
         std_error_relative_to_mean = std_error / simulation_data.final_balances.mean()
 
-        # Stop if we have good convergence
-        if std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE or (
-            diff_compare_last != float("inf")
-            and diff_compare_last <= STD_ERROR_DIFF_THRESHOLD
+        # Stop only once we have enough sims for trial-to-trial comparisons
+        # to be stable (prevents overfitting on lucky 50K draws).
+        if n_sims >= MIN_SIMS_FOR_CONVERGENCE and (
+            std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE
+            or (
+                diff_compare_last != float("inf")
+                and diff_compare_last <= STD_ERROR_DIFF_THRESHOLD
+            )
         ):
             break
 
@@ -218,9 +226,7 @@ if __name__ == "__main__":
             f"  Withdrawal ratio: {best_params['withdrawal_percentage_when_negative_year']:.2f}"
         )
         print(f"  Retirement years: {RETIREMENT_YEARS} years")
-        print(
-            f"  Random with real life constraints: {'Yes' if REAL_LIFE_CONSTRAINTS else 'No'}"
-        )
+        print(f"  Sampling mode: {SAMPLING_MODE} (block size: {BLOCK_BOOTSTRAP_SIZE})")
         print(
             f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
         )
@@ -276,7 +282,8 @@ if __name__ == "__main__":
             initial_balance=best_params["initial_balance"],
             withdrawal=best_params["withdrawal"],
             withdrawal_negative_year=best_params["withdrawal_negative_year"],
-            random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
+            sampling_mode=SAMPLING_MODE,
+            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             sp500_percentage=best_params["sp500_percentage"],
             bond_rate=BOND_RATE,
             n_years=RETIREMENT_YEARS,
@@ -305,6 +312,9 @@ if __name__ == "__main__":
         "script": "04_tuning.py",
         "STD_ERROR_DIFF_THRESHOLD": STD_ERROR_DIFF_THRESHOLD,
         "STD_ERROR_ACCEPTANCE": STD_ERROR_ACCEPTANCE,
+        "MIN_SIMS_FOR_CONVERGENCE": MIN_SIMS_FOR_CONVERGENCE,
+        "SAMPLING_MODE": SAMPLING_MODE,
+        "BLOCK_BOOTSTRAP_SIZE": BLOCK_BOOTSTRAP_SIZE,
         "INITIAL_BALANCE_RANGE": list(INITIAL_BALANCE_RANGE),
         "INITIAL_BALANCE_STEP": INITIAL_BALANCE_STEP,
         "WITHDRAWAL_RANGE": list(WITHDRAWAL_RANGE),
@@ -318,7 +328,6 @@ if __name__ == "__main__":
         "TRIAL_COUNT": TRIAL_COUNT,
         "STORAGE_PATH": STORAGE_PATH,
         "STUDY_NAME": STUDY_NAME,
-        "REAL_LIFE_CONSTRAINTS": REAL_LIFE_CONSTRAINTS,
         "RETIREMENT_YEARS": RETIREMENT_YEARS,
         "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN,
         "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX,

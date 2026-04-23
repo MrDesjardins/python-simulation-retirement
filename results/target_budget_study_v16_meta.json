@@ -1,0 +1,100 @@
+{
+  "study_name": "target_budget_study_v16",
+  "storage_url": "sqlite:///db_05.sqlite3",
+  "fixed_config": {
+    "script": "05_target_year_budget.py",
+    "STD_ERROR_DIFF_THRESHOLD": 0.01,
+    "STD_ERROR_ACCEPTANCE": 0.001,
+    "MIN_SIMS_FOR_CONVERGENCE": 200000,
+    "SAMPLING_MODE": "block_bootstrap",
+    "BLOCK_BOOTSTRAP_SIZE": 5,
+    "INITIAL_BALANCE": 4200000,
+    "WITHDRAWAL_RANGE": [
+      96000,
+      120000
+    ],
+    "WITHDRAWAL_STEP": 2000,
+    "WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE": [
+      0.9,
+      1.0
+    ],
+    "WITHDRAWAL_NEGATIVE_STEP": 0.01,
+    "N_SIMS_RANGE": [
+      50000,
+      1500000
+    ],
+    "STEP_N_SIMS": 50000,
+    "TRIAL_COUNT": 2000,
+    "STORAGE_PATH": "sqlite:///db_05.sqlite3",
+    "STUDY_NAME": "target_budget_study_v16",
+    "RETIREMENT_YEARS": 40,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN": 0.7,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX": 1.0,
+    "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP": 0.05,
+    "INFLATION_RATE": 0.036,
+    "BOND_RATE": 0.036,
+    "YEARS_WITHOUT_SOCIAL_SECURITY": 18,
+    "SOCIAL_SECURITY_MONEY": 38000,
+    "YEARS_WITH_SUPPLEMENTAL_INCOME": 12,
+    "SUPPLEMENTAL_INCOME": 18000,
+    "OPTIMIZATION_RANDOM_SEED": null,
+    "OBJECTIVE_WEIGHTS": {
+      "prob_success": 0.55,
+      "withdrawal": 0.15,
+      "withdrawal_consistency": 0.1,
+      "final_balance": 0.2
+    },
+    "PROB_THRESHOLD_MIN": 0.95,
+    "PROB_THRESHOLD_MAX": 1.0,
+    "PROB_THRESHOLD_STEEPNESS": 7,
+    "MIN_ACCEPTABLE_PROB": 0.85,
+    "PRUNER_MEDIAN_N_STARTUP_TRIALS": 5,
+    "PRUNER_MEDIAN_N_WARMUP_STEPS": 1,
+    "FINAL_VALIDATION_N_SIMS": 1000000
+  },
+  "wall_time_sec": 755.703898496984,
+  "aggregates": {
+    "total_trials": 2000,
+    "state_counts": {
+      "COMPLETE": 220,
+      "PRUNED": 1780
+    },
+    "complete": 220,
+    "pruned": 1780,
+    "fail": 0,
+    "total_n_sims": 278400000,
+    "total_n_sims_from_df": 278400000
+  },
+  "best": {
+    "trial_number": 20,
+    "params": {
+      "withdrawal": 110000.0,
+      "withdrawal_percentage_when_negative_year": 0.9500000000000001,
+      "sp500_percentage": 0.7
+    },
+    "user_attrs": {
+      "final_balance_term": 1.0,
+      "final_relative_balance_to_median": 12.322425179631335,
+      "n_sims_used": 850000,
+      "prob_success": 0.9929329411764706,
+      "prob_term": 0.9984578884268069,
+      "score": 0.9969432254053985,
+      "withdrawal_diff_ratio_term": 0.9915205821361166,
+      "withdrawal_negative_year": 104500.00000000001,
+      "withdrawal_term": 0.9909288570469542
+    },
+    "value": 0.9969432254053985
+  },
+  "validation": {
+    "n_sims": 1000000,
+    "probability_of_success": 0.993,
+    "std_final": 63875689.40862005,
+    "std_error": 63875.689408620055,
+    "mean_final_balance": 69590511.73625442,
+    "median_final_balance": 51667088.728338204,
+    "initial_balance": 4200000.0,
+    "withdrawal": 110000.0,
+    "withdrawal_negative_year": 104500.00000000001,
+    "n_years": 40
+  }
+}

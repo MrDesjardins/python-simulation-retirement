@@ -1,10 +1,17 @@
 import time
+from dataclasses import dataclass
 from multiprocessing import Pool, cpu_count
-from typing import Optional
+from typing import Literal, Optional
 import pandas as pd
 import numpy as np
 import math
-from random_utils import generate_constrained_indices
+from random_utils import (
+    generate_block_bootstrap_indices,
+    generate_constrained_indices,
+)
+
+SamplingMode = Literal["random", "constrained", "block_bootstrap"]
+BondReturnMode = Literal["fixed", "historical"]
 
 
 class SimulationData:
@@ -124,6 +131,309 @@ class SimulationData:
             )
 
 
+@dataclass(frozen=True)
+class HedgingConfig:
+    """
+    Return-shaping hedge approximation for retirement simulations.
+
+    This is NOT options pricing. No contracts, Greeks, implied volatility,
+    rolling, execution, slippage, or broker mechanics are modeled.
+    """
+
+    enabled: bool
+    strategy: Literal["none", "protective_put", "tail_hedge", "collar", "covered_call"]
+    rebalance_frequency: Literal["monthly", "yearly"]
+    apply_to_equity_only: bool = True
+
+    # Protective put abstraction
+    protective_put_cost_annual: float = 0.015
+    protective_put_floor: float = -0.15
+    # Fraction of loss below the floor offset by hedge payoff (1.0 = full floor clamp).
+    protective_put_coverage: float = 1.0
+
+    # Tail hedge abstraction
+    tail_hedge_cost_annual: float = 0.005
+    tail_hedge_trigger: float = -0.20
+    tail_hedge_slope: float = 0.75
+
+    # Collar abstraction
+    collar_floor: float = -0.10
+    collar_cap: float = 0.10
+    collar_cost_annual: float = 0.0
+
+    # Covered-call abstraction
+    covered_call_write_fraction: float = 0.05
+    covered_call_strike_otm: float = 0.05
+    covered_call_premium_annual: float = 0.006
+    covered_call_assignment_cost: float = 0.002
+
+    # Approximate intra-period re-hedging. Example: yearly data with 12 sub-steps
+    # simulates periodic hedge refreshes inside the year.
+    rehedge_substeps_per_period: int = 1
+
+
+def periods_per_year_from_frequency(
+    frequency: Literal["monthly", "yearly"],
+) -> int:
+    if frequency == "monthly":
+        return 12
+    return 1
+
+
+def annual_hedging_drag_estimate(hedging_config: HedgingConfig) -> float:
+    if not hedging_config.enabled or hedging_config.strategy == "none":
+        return 0.0
+    if hedging_config.strategy == "protective_put":
+        return hedging_config.protective_put_cost_annual
+    if hedging_config.strategy == "tail_hedge":
+        return hedging_config.tail_hedge_cost_annual
+    if hedging_config.strategy == "collar":
+        return hedging_config.collar_cost_annual
+    if hedging_config.strategy == "covered_call":
+        # Premium income is negative drag.
+        return -hedging_config.covered_call_premium_annual
+    raise ValueError(f"Unsupported hedging strategy: {hedging_config.strategy}")
+
+
+def apply_hedge_to_equity_return(
+    equity_return: float,
+    hedging_config: HedgingConfig,
+    periods_per_year: int,
+) -> float:
+    if periods_per_year <= 0:
+        raise ValueError(f"periods_per_year must be positive, got {periods_per_year}")
+    if hedging_config.rehedge_substeps_per_period <= 0:
+        raise ValueError(
+            "rehedge_substeps_per_period must be positive, "
+            f"got {hedging_config.rehedge_substeps_per_period}"
+        )
+    if not hedging_config.enabled or hedging_config.strategy == "none":
+        return equity_return
+
+    substeps = hedging_config.rehedge_substeps_per_period
+    cost_periods_per_year = periods_per_year * substeps
+    if equity_return <= -1.0:
+        raw_subperiod_return = -1.0
+    else:
+        raw_subperiod_return = (1.0 + equity_return) ** (1.0 / substeps) - 1.0
+
+    if hedging_config.strategy == "protective_put":
+        period_cost = hedging_config.protective_put_cost_annual / cost_periods_per_year
+        floor_sub = (1.0 + hedging_config.protective_put_floor) ** (1.0 / substeps) - 1.0
+        coverage = float(np.clip(hedging_config.protective_put_coverage, 0.0, 1.0))
+        hedged_sub = raw_subperiod_return - period_cost
+        if raw_subperiod_return < floor_sub:
+            hedged_sub += coverage * (floor_sub - raw_subperiod_return)
+        return (1.0 + hedged_sub) ** substeps - 1.0
+
+    if hedging_config.strategy == "tail_hedge":
+        period_cost = hedging_config.tail_hedge_cost_annual / cost_periods_per_year
+        trigger_sub = (1.0 + hedging_config.tail_hedge_trigger) ** (1.0 / substeps) - 1.0
+        if raw_subperiod_return >= trigger_sub:
+            hedged_sub = raw_subperiod_return - period_cost
+        else:
+            excess_drawdown = trigger_sub - raw_subperiod_return
+            protection = hedging_config.tail_hedge_slope * excess_drawdown
+            hedged_sub = raw_subperiod_return - period_cost + protection
+        return (1.0 + hedged_sub) ** substeps - 1.0
+
+    if hedging_config.strategy == "collar":
+        period_cost = hedging_config.collar_cost_annual / cost_periods_per_year
+        floor_sub = (1.0 + hedging_config.collar_floor) ** (1.0 / substeps) - 1.0
+        cap_sub = (1.0 + hedging_config.collar_cap) ** (1.0 / substeps) - 1.0
+        bounded = min(
+            cap_sub,
+            max(raw_subperiod_return, floor_sub),
+        )
+        hedged_sub = bounded - period_cost
+        return (1.0 + hedged_sub) ** substeps - 1.0
+
+    if hedging_config.strategy == "covered_call":
+        write_fraction = float(np.clip(hedging_config.covered_call_write_fraction, 0.0, 1.0))
+        strike_sub = (1.0 + hedging_config.covered_call_strike_otm) ** (1.0 / substeps) - 1.0
+        premium_sub = hedging_config.covered_call_premium_annual / cost_periods_per_year
+        assignment_cost_sub = hedging_config.covered_call_assignment_cost / substeps
+        written_leg = premium_sub + min(raw_subperiod_return, strike_sub)
+        if raw_subperiod_return > strike_sub:
+            written_leg -= assignment_cost_sub
+        hedged_sub = (1.0 - write_fraction) * raw_subperiod_return + write_fraction * written_leg
+        return (1.0 + hedged_sub) ** substeps - 1.0
+
+    raise ValueError(f"Unsupported hedging strategy: {hedging_config.strategy}")
+
+
+def _apply_hedge_to_return_array(
+    returns: np.ndarray,
+    hedging_config: HedgingConfig,
+    periods_per_year: int,
+) -> np.ndarray:
+    """
+    Vectorized equivalent of apply_hedge_to_equity_return for performance.
+    """
+    if not hedging_config.enabled or hedging_config.strategy == "none":
+        return returns
+    if periods_per_year <= 0:
+        raise ValueError(f"periods_per_year must be positive, got {periods_per_year}")
+    if hedging_config.rehedge_substeps_per_period <= 0:
+        raise ValueError(
+            "rehedge_substeps_per_period must be positive, "
+            f"got {hedging_config.rehedge_substeps_per_period}"
+        )
+
+    substeps = hedging_config.rehedge_substeps_per_period
+    cost_periods_per_year = periods_per_year * substeps
+    raw_subperiod_returns = np.power(np.maximum(1.0 + returns, 0.0), 1.0 / substeps) - 1.0
+
+    if hedging_config.strategy == "protective_put":
+        period_cost = hedging_config.protective_put_cost_annual / cost_periods_per_year
+        floor_sub = (1.0 + hedging_config.protective_put_floor) ** (1.0 / substeps) - 1.0
+        coverage = float(np.clip(hedging_config.protective_put_coverage, 0.0, 1.0))
+        hedged_sub = raw_subperiod_returns - period_cost
+        mask = raw_subperiod_returns < floor_sub
+        if np.any(mask):
+            hedged_sub = hedged_sub.copy()
+            hedged_sub[mask] += coverage * (floor_sub - raw_subperiod_returns[mask])
+        return np.power(np.maximum(1.0 + hedged_sub, 0.0), substeps) - 1.0
+
+    if hedging_config.strategy == "tail_hedge":
+        period_cost = hedging_config.tail_hedge_cost_annual / cost_periods_per_year
+        trigger_sub = (1.0 + hedging_config.tail_hedge_trigger) ** (1.0 / substeps) - 1.0
+        base = raw_subperiod_returns - period_cost
+        mask = raw_subperiod_returns < trigger_sub
+        if not np.any(mask):
+            return np.power(np.maximum(1.0 + base, 0.0), substeps) - 1.0
+        excess_drawdown = trigger_sub - raw_subperiod_returns[mask]
+        base = base.copy()
+        base[mask] += hedging_config.tail_hedge_slope * excess_drawdown
+        return np.power(np.maximum(1.0 + base, 0.0), substeps) - 1.0
+
+    if hedging_config.strategy == "collar":
+        period_cost = hedging_config.collar_cost_annual / cost_periods_per_year
+        floor_sub = (1.0 + hedging_config.collar_floor) ** (1.0 / substeps) - 1.0
+        cap_sub = (1.0 + hedging_config.collar_cap) ** (1.0 / substeps) - 1.0
+        bounded = np.minimum(
+            cap_sub,
+            np.maximum(raw_subperiod_returns, floor_sub),
+        )
+        hedged_sub = bounded - period_cost
+        return np.power(np.maximum(1.0 + hedged_sub, 0.0), substeps) - 1.0
+
+    if hedging_config.strategy == "covered_call":
+        write_fraction = float(np.clip(hedging_config.covered_call_write_fraction, 0.0, 1.0))
+        strike_sub = (1.0 + hedging_config.covered_call_strike_otm) ** (1.0 / substeps) - 1.0
+        premium_sub = hedging_config.covered_call_premium_annual / cost_periods_per_year
+        assignment_cost_sub = hedging_config.covered_call_assignment_cost / substeps
+        written_leg = premium_sub + np.minimum(raw_subperiod_returns, strike_sub)
+        assigned_mask = raw_subperiod_returns > strike_sub
+        if np.any(assigned_mask):
+            written_leg = written_leg.copy()
+            written_leg[assigned_mask] -= assignment_cost_sub
+        hedged_sub = (1.0 - write_fraction) * raw_subperiod_returns + write_fraction * written_leg
+        return np.power(np.maximum(1.0 + hedged_sub, 0.0), substeps) - 1.0
+
+    raise ValueError(f"Unsupported hedging strategy: {hedging_config.strategy}")
+
+
+def load_shiller_annual_stock_bond_returns(
+    file_path: str = "data/ie_data.xls",
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Load aligned annual nominal stock and bond returns from Shiller ie_data.xls.
+
+    Stock series:
+      Reconstructed nominal total-return index from Real TR Price * CPI, then
+      annual pct_change of year-end values.
+    Bond series:
+      Monthly long-term bond gross return relatives (Shiller first "Returns"
+      column) compounded within each year, minus 1.
+
+    Returns:
+        (stock_returns, bond_returns) aligned year-for-year.
+    """
+    raw = pd.read_excel(file_path, sheet_name="Data", skiprows=7, header=None)
+    headers = raw.iloc[0].tolist()
+    df = raw.iloc[1:].copy()
+    df.columns = headers
+
+    df["Date"] = pd.to_numeric(df.iloc[:, 0], errors="coerce")
+    df["CPI"] = pd.to_numeric(df.iloc[:, 4], errors="coerce")
+    df["RealTotalReturnPrice"] = pd.to_numeric(df.iloc[:, 9], errors="coerce")
+    # First "Returns" column is monthly gross long-bond total return relative.
+    df["BondGrossMonthly"] = pd.to_numeric(df.iloc[:, 17], errors="coerce")
+    df["Year"] = np.floor(df["Date"]).astype("Int64")
+
+    stock_df = df.dropna(subset=["Year", "CPI", "RealTotalReturnPrice"]).copy()
+    stock_df["NominalTotalReturnPrice"] = (
+        stock_df["RealTotalReturnPrice"] * stock_df["CPI"]
+    )
+    stock_annual = (
+        stock_df.groupby("Year")["NominalTotalReturnPrice"].last().dropna().pct_change()
+    )
+
+    bond_df = df.dropna(subset=["Year", "BondGrossMonthly"]).copy()
+    bond_annual = bond_df.groupby("Year")["BondGrossMonthly"].prod().dropna() - 1.0
+
+    aligned_years = stock_annual.dropna().index.intersection(bond_annual.index)
+    if len(aligned_years) == 0:
+        raise ValueError("No overlapping annual stock/bond history found in ie_data.xls")
+
+    stock_returns = stock_annual.loc[aligned_years].to_numpy(dtype=np.float64)
+    bond_returns = bond_annual.loc[aligned_years].to_numpy(dtype=np.float64)
+    return stock_returns, bond_returns
+
+
+def load_shiller_annual_returns(
+    file_path: str = "data/ie_data.xls",
+    *,
+    nominal: bool = True,
+) -> np.ndarray:
+    """
+    Load annual S&P Composite total-return series from Shiller's ie_data.xls.
+
+    The engine is run in NOMINAL dollars (nominal=True, the default), so that
+    a $100K withdrawal today grows with inflation to ~$400K in 40 years, and
+    stock/bond returns are also nominal. This keeps every simulation in the
+    same units.
+
+    Shiller's file has a "Real Total Return Price" column (CPI-adjusted,
+    dividends reinvested) but no explicit nominal counterpart. We rebuild
+    nominal total return by multiplying by CPI; the base-period CPI constant
+    drops out when we take pct_change.
+
+    Args:
+        file_path: path to Shiller's ie_data.xls
+        nominal: if True (default), returns nominal annual returns. If False,
+            returns real (CPI-adjusted) annual returns — kept for reference /
+            backwards compatibility with prior behavior.
+
+    Returns:
+        1D numpy array of annual returns, one per year.
+    """
+    df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
+    # Col 0: Date (e.g. 1871.01), Col 4: CPI, Col 9: Real Total Return Price
+    df = df.iloc[:, [0, 4, 9]]
+    df.columns = ["Date", "CPI", "RealTotalReturnPrice"]
+    # Shiller's file has a few trailing rows with 'NA' strings / object dtype.
+    # Coerce to numeric and drop those rows so pandas doesn't emit
+    # FutureWarnings about implicit object-dtype downcasting in pct_change.
+    df["CPI"] = pd.to_numeric(df["CPI"], errors="coerce")
+    df["RealTotalReturnPrice"] = pd.to_numeric(
+        df["RealTotalReturnPrice"], errors="coerce"
+    )
+    df = df.dropna(subset=["Date", "CPI", "RealTotalReturnPrice"])
+    df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
+
+    if nominal:
+        # Nominal_TR[t] = Real_TR[t] * CPI[t] (up to a constant base-CPI
+        # factor that cancels in pct_change).
+        df["Series"] = df["RealTotalReturnPrice"] * df["CPI"]
+    else:
+        df["Series"] = df["RealTotalReturnPrice"]
+
+    annual = df.groupby("Year")["Series"].last().dropna()
+    return annual.pct_change().dropna().to_numpy()
+
+
 def format_withdrawal_breakdown(
     *,
     withdrawal: float,
@@ -196,48 +506,65 @@ _INITIAL_BALANCE: float
 _WITHDRAWAL: float 
 _WITHDRAWAL_NEGATIVE_YEAR: float 
 _GO_BACK_YEARS: int
-_RANDOM_CONSTRAINED_INDICES: bool 
+_SAMPLING_MODE: str
+_BLOCK_BOOTSTRAP_SIZE: int
 _SP500_PERCENTAGE: float 
 _BOND_RATE: float 
+_BOND_RETURNS: Optional[np.ndarray]
+_BOND_RETURN_MODE: BondReturnMode
 _INFLATION_RATE: float 
 _YEARS_WITHOUT_SOCIAL_SECURITY: int 
 _SOCIAL_SECURITY_MONEY: float
 _YEARS_WITH_SUPPLEMENTAL_INCOME: int
 _SUPPLEMENTAL_INCOME: float
+_HEDGING_CONFIG: HedgingConfig
+_HEDGE_PERIODS_PER_YEAR: int
 
 def _init_worker(
     returns: np.ndarray,
+    bond_returns: Optional[np.ndarray],
     n_years: int,
     initial_balance: float,
     withdrawal: float,
     withdrawal_negative_year: float,
     go_back_year: int,
-    random_with_real_life_constraints: bool,
+    sampling_mode: str,
+    block_bootstrap_size: int,
     sp500_percentage: float,
     bond_rate: float,
+    bond_return_mode: BondReturnMode,
     inflation_rate: float,
     years_without_social_security: int,
     social_security_money: float,
     years_with_supplemental_income: int,
     supplemental_income: float,
+    hedging_config: HedgingConfig,
 ):
-    global _RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
-        _RANDOM_CONSTRAINED_INDICES, _SP500_PERCENTAGE, _BOND_RATE, _INFLATION_RATE, _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY, \
-        _YEARS_WITH_SUPPLEMENTAL_INCOME, _SUPPLEMENTAL_INCOME
+    global _RETURNS, _BOND_RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
+        _SAMPLING_MODE, _BLOCK_BOOTSTRAP_SIZE, _SP500_PERCENTAGE, _BOND_RATE, _BOND_RETURN_MODE, _INFLATION_RATE, \
+        _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY, \
+        _YEARS_WITH_SUPPLEMENTAL_INCOME, _SUPPLEMENTAL_INCOME, _HEDGING_CONFIG, _HEDGE_PERIODS_PER_YEAR
     _RETURNS = returns
+    _BOND_RETURNS = bond_returns
     _N_YEARS = n_years
     _INITIAL_BALANCE = initial_balance
     _WITHDRAWAL = withdrawal
     _WITHDRAWAL_NEGATIVE_YEAR = withdrawal_negative_year
     _GO_BACK_YEARS = go_back_year
-    _RANDOM_CONSTRAINED_INDICES = random_with_real_life_constraints
+    _SAMPLING_MODE = sampling_mode
+    _BLOCK_BOOTSTRAP_SIZE = block_bootstrap_size
     _SP500_PERCENTAGE = sp500_percentage
     _BOND_RATE = bond_rate
+    _BOND_RETURN_MODE = bond_return_mode
     _INFLATION_RATE = inflation_rate
     _YEARS_WITHOUT_SOCIAL_SECURITY = years_without_social_security
     _SOCIAL_SECURITY_MONEY = social_security_money
     _YEARS_WITH_SUPPLEMENTAL_INCOME = years_with_supplemental_income    
     _SUPPLEMENTAL_INCOME = supplemental_income
+    _HEDGING_CONFIG = hedging_config
+    _HEDGE_PERIODS_PER_YEAR = periods_per_year_from_frequency(
+        hedging_config.rebalance_frequency
+    )
 
 def _simulate_chunk(args):
     """
@@ -250,17 +577,33 @@ def _simulate_chunk(args):
     rng = np.random.default_rng(seed)
     m = len(_RETURNS)
 
-    # Generate shuffled or constrained indices
+    # Generate per-scenario index sequences according to sampling mode.
+    #   - "block_bootstrap": preserves multi-year crash regimes (recommended)
+    #   - "constrained":     bounds consecutive losing/winning streaks
+    #   - "random":          single-year permutation w/o replacement (legacy)
     idx = np.empty((chunk_size, _N_YEARS), dtype=np.int64)
-    if _RANDOM_CONSTRAINED_INDICES:
+    if _SAMPLING_MODE == "block_bootstrap":
+        for i in range(chunk_size):
+            idx[i] = generate_block_bootstrap_indices(
+                rng, m, _N_YEARS, block_size=_BLOCK_BOOTSTRAP_SIZE
+            )
+    elif _SAMPLING_MODE == "constrained":
         for i in range(chunk_size):
             idx[i] = generate_constrained_indices(rng, _RETURNS, _N_YEARS)
-    else:
+    elif _SAMPLING_MODE == "random":
         for i in range(chunk_size):
             idx[i] = rng.permutation(m)[:_N_YEARS]
+    else:
+        raise ValueError(f"Unknown sampling_mode: {_SAMPLING_MODE!r}")
 
     # Get the returns for each simulation
     sim_returns = _RETURNS[idx]  # shape (chunk_size, _N_YEARS)
+    if _BOND_RETURN_MODE == "historical":
+        if _BOND_RETURNS is None:
+            raise ValueError("bond_return_mode='historical' requires bond return series")
+        sim_bond_returns = _BOND_RETURNS[idx]
+    else:
+        sim_bond_returns = None
 
     # Initialize balances and optional trajectories
     balances = np.full(chunk_size, _INITIAL_BALANCE, dtype=np.float64)
@@ -292,11 +635,18 @@ def _simulate_chunk(args):
         supplemental_income_per_year[:years_with_supplemental] = _SUPPLEMENTAL_INCOME * inflation_factors[:years_with_supplemental]  # Adjust for inflation
 
     # Vectorized simulation over years
+    prev_portfolio_return: Optional[np.ndarray] = None
     for t in range(_N_YEARS):
-        # Determine withdrawals depending on market return.
-        withdrawals = np.where(
-            sim_returns[:, t] >= 0, float(_WITHDRAWAL), float(_WITHDRAWAL_NEGATIVE_YEAR)
-        )
+        # Year 1 has no realized prior-year return, so default to regular withdrawal.
+        if t == 0 or prev_portfolio_return is None:
+            withdrawals = np.full(chunk_size, float(_WITHDRAWAL), dtype=np.float64)
+        else:
+            # Use prior-year realized portfolio return to avoid look-ahead bias.
+            withdrawals = np.where(
+                prev_portfolio_return >= 0.0,
+                float(_WITHDRAWAL),
+                float(_WITHDRAWAL_NEGATIVE_YEAR),
+            )
         withdrawals *= inflation_factors[t]  # Apply inflation
         # Reduce portfolio withdrawal by social security for this year (do not double-count).
         ss_amount = social_security_per_year[t]
@@ -305,8 +655,30 @@ def _simulate_chunk(args):
         # Net withdrawal from portfolio (cannot be negative).
         withdrawals = np.maximum(withdrawals - ss_amount - supp_amount, 0.0)
 
+        equity_returns_t = sim_returns[:, t]
+        if _BOND_RETURN_MODE == "historical":
+            assert sim_bond_returns is not None
+            bond_returns_t = sim_bond_returns[:, t]
+        else:
+            bond_returns_t = _BOND_RATE
+
+        if _HEDGING_CONFIG.apply_to_equity_only:
+            hedged_equity_returns = _apply_hedge_to_return_array(
+                equity_returns_t,
+                _HEDGING_CONFIG,
+                _HEDGE_PERIODS_PER_YEAR,
+            )
+            portfolio_return = sp500_frac * hedged_equity_returns + bond_frac * bond_returns_t
+        else:
+            blended_return = sp500_frac * equity_returns_t + bond_frac * bond_returns_t
+            portfolio_return = _apply_hedge_to_return_array(
+                blended_return,
+                _HEDGING_CONFIG,
+                _HEDGE_PERIODS_PER_YEAR,
+            )
+
         # Compute portfolio growth using linear allocation
-        portfolio_growth = 1 + sp500_frac * sim_returns[:, t] + bond_frac * _BOND_RATE
+        portfolio_growth = 1 + portfolio_return
 
         # Update balances after withdrawals and growth
         balances = (balances - withdrawals) * portfolio_growth
@@ -321,6 +693,7 @@ def _simulate_chunk(args):
 
         if return_traj:
             trajectories[:, t + 1] = balances
+        prev_portfolio_return = portfolio_return
 
     return balances, trajectories
 
@@ -336,29 +709,46 @@ def run_simulation_mp(
     n_workers: Optional[int] = None,
     return_trajectories: bool=False,
     chunk_size: Optional[int] = None,
-    random_with_real_life_constraints: bool=False,
+    random_with_real_life_constraints: bool = False,
+    sampling_mode: Optional[str] = None,
+    block_bootstrap_size: int = 5,
     sp500_percentage: float = 1.0,
     bond_rate: float = 0.04,
+    bond_return_mode: BondReturnMode = "fixed",
     inflation_rate: float = 0.03,
     years_without_social_security: int = 35,
     social_security_money: float = 0,
     years_with_supplemental_income: int = 0,
     supplemental_income: float = 0,
     random_seed: Optional[int] = None,
+    hedging_config: Optional[HedgingConfig] = None,
+    returns_override: Optional[np.ndarray] = None,
+    bond_returns_override: Optional[np.ndarray] = None,
 ):
     """
     Run Monte Carlo retirement portfolio simulations using multiprocessing.
+
+    UNITS: Everything is in NOMINAL (today-forward) dollars.
+    - `withdrawal`, `social_security_money`, `supplemental_income`, and
+      `initial_balance` are entered as TODAY's dollars.
+    - Withdrawals, SS, and supplemental income all grow with `inflation_rate`.
+    - Stock returns are NOMINAL (reconstructed from Shiller Real TR × CPI).
+    - `bond_rate` is NOMINAL.
+    - So a $100K withdrawal today grows to roughly $100K * (1+inflation)^40
+      by year 40, while the portfolio also grows in nominal terms.
 
     KEY ASSUMPTIONS:
     1. Withdrawals occur at the START of each year (before portfolio growth)
        This is more conservative than withdrawing at year-end.
 
     2. Portfolio allocation is LINEAR and rebalanced annually:
-       return = sp500_percentage * stock_return + (1 - sp500_percentage) * bond_rate
+       return = sp500_percentage * stock_return + (1 - sp500_percentage) * bond_return
        This assumes perfect rebalancing to target allocation each year.
 
-    3. Bond returns are FIXED at bond_rate each year (no variability)
-       Stock returns use historical data with actual volatility.
+    3. Bond returns can be:
+       - fixed (bond_return_mode="fixed"): bond_rate each year, or
+       - historical (bond_return_mode="historical"): sampled from Shiller's
+         long-bond return series using the same sampled years as equities.
 
     4. All amounts (withdrawals, income) are adjusted for inflation annually
        using compound inflation: amount * (1 + inflation_rate)^year
@@ -366,10 +756,21 @@ def run_simulation_mp(
     5. Income sources reduce portfolio withdrawals (not added to balance)
        Net withdrawal = max(0, withdrawal - social_security - supplemental_income)
 
-    6. Sampling modes:
-       - Unconstrained: Random selection with replacement from historical returns
-       - Constrained: Limits consecutive negative/positive years and cumulative changes
-         to prevent unrealistic "perfect storm" or "perfect boom" scenarios
+    5b. Negative-year withdrawal switching uses PRIOR-YEAR realized portfolio
+        return sign (year 1 defaults to regular withdrawal), avoiding look-ahead.
+
+    6. Sampling modes (sampling_mode parameter):
+       - "block_bootstrap" (DEFAULT, recommended): Samples consecutive blocks of
+         `block_bootstrap_size` historical years (with replacement, circular).
+         Preserves multi-year crash sequences (1929-32, 1973-74, 2000-02,
+         2007-09) that drive sequence-of-returns risk in real retirements.
+       - "random": Single-year permutation without replacement. Destroys
+         autocorrelation; tends to under-state sequence risk.
+       - "constrained": Bounds consecutive negative/positive years and
+         cumulative changes to avoid pathological streaks.
+
+       Backwards-compat: `random_with_real_life_constraints=True` is mapped
+       to "constrained" if `sampling_mode` is not explicitly set.
 
     Parameters:
         n_sims: Number of simulation runs
@@ -381,28 +782,70 @@ def run_simulation_mp(
         n_workers: Number of worker processes (default: cpu_count - 1)
         return_trajectories: If True, return full year-by-year trajectories
         chunk_size: Simulations per worker chunk (default: auto-calculated)
-        random_with_real_life_constraints: Use constrained sampling vs pure random
+        random_with_real_life_constraints: Legacy flag. If sampling_mode is
+            None, True maps to "constrained" and False to "block_bootstrap".
+        sampling_mode: One of {"block_bootstrap", "random", "constrained"}.
+            If None (default), derived from random_with_real_life_constraints.
+        block_bootstrap_size: Block length (years) when sampling_mode is
+            "block_bootstrap". Default 5.
         sp500_percentage: Fraction of portfolio in stocks (0.0 to 1.0)
-        bond_rate: Annual bond return rate (e.g., 0.04 for 4%)
+        bond_rate: Annual bond return rate (e.g., 0.04 for 4%) when
+            bond_return_mode="fixed".
+        bond_return_mode: "fixed" (default) or "historical".
         inflation_rate: Annual inflation rate (e.g., 0.03 for 3%)
         years_without_social_security: Years until social security starts
         social_security_money: Annual social security income ($, before inflation)
         years_with_supplemental_income: Number of years with supplemental income
         supplemental_income: Annual supplemental income ($, before inflation)
         random_seed: Optional seed for reproducibility (None = random)
+        hedging_config: Optional hedge return-shaping config. This is an approximation,
+            not executable options pricing or options contract simulation.
+        returns_override: Optional equity return series override.
+        bond_returns_override: Optional bond return series override for
+            bond_return_mode="historical". Must match equity series length.
 
     Returns:
         SimulationData object containing results, statistics, and optional trajectories
     """
-    # Load returns from your file (same as before)
-    file_path = "data/ie_data.xls"
-    df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
-    df = df.iloc[:, [0, 9]]
-    df.columns = ["Date", "Real Total Return Price"]
-    df = df.dropna()
-    df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
-    annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
-    returns: np.ndarray = annual.pct_change().dropna().to_numpy()
+    bond_returns: Optional[np.ndarray] = None
+    if bond_return_mode not in ("fixed", "historical"):
+        raise ValueError(
+            f"bond_return_mode must be one of 'fixed', 'historical'; got {bond_return_mode!r}"
+        )
+
+    if returns_override is not None:
+        returns = np.asarray(returns_override, dtype=np.float64)
+        if returns.ndim != 1:
+            raise ValueError(
+                "returns_override must be a 1D array of period returns, "
+                f"got shape {returns.shape}"
+            )
+        if len(returns) == 0:
+            raise ValueError("returns_override cannot be empty")
+        if bond_return_mode == "historical":
+            if bond_returns_override is None:
+                raise ValueError(
+                    "bond_return_mode='historical' with returns_override requires "
+                    "bond_returns_override of equal length"
+                )
+            bond_returns = np.asarray(bond_returns_override, dtype=np.float64)
+            if bond_returns.ndim != 1:
+                raise ValueError(
+                    "bond_returns_override must be a 1D array of period returns, "
+                    f"got shape {bond_returns.shape}"
+                )
+            if len(bond_returns) != len(returns):
+                raise ValueError(
+                    "bond_returns_override length must match returns_override length, "
+                    f"got {len(bond_returns)} vs {len(returns)}"
+                )
+    else:
+        # NOMINAL returns so that stock returns, bond rate, and inflated
+        # withdrawals are all in the same (nominal) units.
+        if bond_return_mode == "historical":
+            returns, bond_returns = load_shiller_annual_stock_bond_returns()
+        else:
+            returns = load_shiller_annual_returns(nominal=True)
     total_years = len(returns)
 
     # Input validation
@@ -449,6 +892,29 @@ def run_simulation_mp(
     if supplemental_income < 0:
         raise ValueError(f"supplemental_income cannot be negative, got {supplemental_income}")
 
+    if hedging_config is None:
+        hedging_config = HedgingConfig(
+            enabled=False,
+            strategy="none",
+            rebalance_frequency="yearly",
+        )
+
+    # Resolve sampling mode. Block bootstrap is the new default because it
+    # preserves multi-year crash regimes (sequence-of-returns risk).
+    if sampling_mode is None:
+        sampling_mode = (
+            "constrained" if random_with_real_life_constraints else "block_bootstrap"
+        )
+    if sampling_mode not in ("random", "constrained", "block_bootstrap"):
+        raise ValueError(
+            f"sampling_mode must be one of 'random', 'constrained', "
+            f"'block_bootstrap'; got {sampling_mode!r}"
+        )
+    if block_bootstrap_size <= 0:
+        raise ValueError(
+            f"block_bootstrap_size must be positive, got {block_bootstrap_size}"
+        )
+
     if n_workers is None:
         n_workers = max(1, cpu_count() - 1)  # leave one core for OS/other tasks
 
@@ -481,19 +947,23 @@ def run_simulation_mp(
         initializer=_init_worker,
         initargs=(
             returns,
+            bond_returns,
             n_years,
             initial_balance,
             withdrawal,
             withdrawal_negative_year,
             go_back_year,
-            random_with_real_life_constraints,
+            sampling_mode,
+            block_bootstrap_size,
             sp500_percentage,
             bond_rate,
+            bond_return_mode,
             inflation_rate,
             years_without_social_security,
             social_security_money,
             years_with_supplemental_income,
             supplemental_income,
+            hedging_config,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
@@ -552,10 +1022,12 @@ def run_simulation_historical_real(
     inflation_rate=0.03,
     sp500_percentage=1.0,
     bond_rate=0.04,
+    bond_return_mode: BondReturnMode = "fixed",
     years_without_social_security=45,
     social_security_money=0,
     years_with_supplemental_income=0,
     supplemental_income=0,
+    hedging_config: Optional[HedgingConfig] = None,
 ):
     """
     Run historical rolling-window backtesting using actual market sequences.
@@ -578,16 +1050,27 @@ def run_simulation_historical_real(
     """
     start_time = time.time()
 
-    # --- Load and prepare historical data ---
-    file_path = "data/ie_data.xls"
-    df = pd.read_excel(file_path, sheet_name="Data", skiprows=8)
-    df = df.iloc[:, [0, 9]]
-    df.columns = ["Date", "Real Total Return Price"]
-    df = df.dropna()
-    df["Year"] = df["Date"].astype(str).str.split(".").str[0].astype(int)
+    if hedging_config is None:
+        hedging_config = HedgingConfig(
+            enabled=False,
+            strategy="none",
+            rebalance_frequency="yearly",
+        )
+    periods_per_year = periods_per_year_from_frequency(
+        hedging_config.rebalance_frequency
+    )
 
-    annual = df.groupby("Year")["Real Total Return Price"].last().dropna()
-    returns = annual.pct_change().dropna().to_numpy()
+    # --- Load and prepare historical data (NOMINAL, same as run_simulation_mp) ---
+    file_path = "data/ie_data.xls"
+    if bond_return_mode == "historical":
+        returns, bond_returns = load_shiller_annual_stock_bond_returns(file_path=file_path)
+    elif bond_return_mode == "fixed":
+        returns = load_shiller_annual_returns(file_path=file_path, nominal=True)
+        bond_returns = None
+    else:
+        raise ValueError(
+            f"bond_return_mode must be one of 'fixed', 'historical'; got {bond_return_mode!r}"
+        )
     total_years = len(returns)
 
     # --- Setup rolling window simulations ---
@@ -624,14 +1107,25 @@ def run_simulation_historical_real(
     # --- Run each simulation sequentially ---
     for i, start in enumerate(start_indices):
         sim_returns = returns[start : start + n_years]
+        if bond_return_mode == "historical":
+            assert bond_returns is not None
+            sim_bond_returns = bond_returns[start : start + n_years]
+        else:
+            sim_bond_returns = None
         balance = float(initial_balance)
+        prev_portfolio_return: Optional[float] = None
 
-        if return_trajectories:
+        if return_trajectories and trajectories is not None:
             trajectories[i, 0] = balance
 
         for t in range(n_years):
-            # Determine withdrawals depending on market return
-            withdrawal_t = withdrawal if sim_returns[t] >= 0 else withdrawal_negative_year
+            # Year 1 has no realized prior-year return, so use regular withdrawal.
+            if t == 0 or prev_portfolio_return is None:
+                withdrawal_t = withdrawal
+            else:
+                withdrawal_t = (
+                    withdrawal if prev_portfolio_return >= 0 else withdrawal_negative_year
+                )
             withdrawal_t = float(withdrawal_t) * inflation_factors[t]
 
             # Reduce portfolio withdrawal by social security and supplemental income
@@ -639,8 +1133,28 @@ def run_simulation_historical_real(
             supp_amount = supplemental_income_per_year[t]
             withdrawal_t = max(withdrawal_t - ss_amount - supp_amount, 0.0)
 
+            raw_equity_return = float(sim_returns[t])
+            if sim_bond_returns is None:
+                bond_return_t = bond_rate
+            else:
+                bond_return_t = float(sim_bond_returns[t])
+            if hedging_config.apply_to_equity_only:
+                hedged_equity_return = apply_hedge_to_equity_return(
+                    raw_equity_return,
+                    hedging_config,
+                    periods_per_year,
+                )
+                portfolio_return = sp500_frac * hedged_equity_return + bond_frac * bond_return_t
+            else:
+                blended_return = sp500_frac * raw_equity_return + bond_frac * bond_return_t
+                portfolio_return = apply_hedge_to_equity_return(
+                    blended_return,
+                    hedging_config,
+                    periods_per_year,
+                )
+
             # Compute portfolio growth using linear allocation
-            portfolio_growth = 1 + sp500_frac * sim_returns[t] + bond_frac * bond_rate
+            portfolio_growth = 1 + portfolio_return
 
             # Update balance after withdrawals and growth
             balance = (balance - withdrawal_t) * portfolio_growth
@@ -652,8 +1166,9 @@ def run_simulation_historical_real(
             # Apply floor at zero
             balance = max(balance, 0.0)
 
-            if return_trajectories:
+            if return_trajectories and trajectories is not None:
                 trajectories[i, t + 1] = balance
+            prev_portfolio_return = portfolio_return
 
         final_balances[i] = balance
 
@@ -667,8 +1182,12 @@ def run_simulation_historical_real(
     if return_trajectories and trajectories is not None:
         failed_indices = np.where(trajectories[:, -1] <= 0)[0]
         # Map each failed simulation index to its starting year
-        first_year = annual.index[0]
-        last_year = annual.index[-1] - n_years + 1
+        date_df = pd.read_excel(file_path, sheet_name="Data", skiprows=8, usecols=[0])
+        date_df.columns = ["Date"]
+        date_df["Date"] = pd.to_numeric(date_df["Date"], errors="coerce")
+        first_observed_year = int(np.floor(date_df["Date"].dropna().min()))
+        first_year = first_observed_year + 1  # pct_change drops the first calendar year
+        last_year = first_year + total_years - 1
         years = np.arange(first_year, last_year + 1)
         starting_years = years[failed_indices]
         # Print the starting year of each failed trajectory

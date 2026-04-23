@@ -5,9 +5,9 @@ from common import run_simulation_historical_real
 
 simulation_data = run_simulation_historical_real(
     return_trajectories=True,
-    initial_balance=5_000_000,
-    withdrawal=100_000,
-    withdrawal_negative_year=90_000,
+    initial_balance=3_000_000,
+    withdrawal=80_000,
+    withdrawal_negative_year=80_000,
 )
 simulation_data.print_stats()
 trajectories = simulation_data.trajectories

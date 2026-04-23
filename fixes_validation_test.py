@@ -192,6 +192,122 @@ def test_simulation_with_supplemental_income():
     assert result.probability_of_success >= result_no_supp.probability_of_success
 
 
+def test_withdrawal_switch_uses_prior_year_portfolio_return():
+    """Year t withdrawal regime must be based on year t-1 realized portfolio return."""
+    returns = np.array([0.50, -0.50], dtype=np.float64)
+    seed = 12345
+    result = run_simulation_mp(
+        n_sims=1,
+        n_workers=1,
+        chunk_size=1,
+        n_years=2,
+        initial_balance=1_000.0,
+        withdrawal=100.0,
+        withdrawal_negative_year=50.0,
+        sp500_percentage=1.0,
+        bond_rate=0.0,
+        inflation_rate=0.0,
+        sampling_mode="random",
+        random_seed=seed,
+        returns_override=returns,
+    )
+
+    order = np.random.default_rng(seed).permutation(len(returns))[:2]
+    sampled = returns[order]
+
+    # Year 1 uses regular withdrawal. Year 2 uses year-1 realized return sign.
+    bal = (1_000.0 - 100.0) * (1.0 + sampled[0])
+    year2_withdrawal = 100.0 if sampled[0] >= 0 else 50.0
+    expected = max((bal - year2_withdrawal) * (1.0 + sampled[1]), 0.0)
+    assert result.final_balances[0] == pytest.approx(expected, abs=1e-9)
+
+
+def test_year1_uses_regular_withdrawal_even_if_first_return_is_negative():
+    """No prior-year return exists in year 1, so regular withdrawal is used."""
+    result = run_simulation_mp(
+        n_sims=1,
+        n_workers=1,
+        chunk_size=1,
+        n_years=1,
+        initial_balance=1_000.0,
+        withdrawal=100.0,
+        withdrawal_negative_year=10.0,
+        sp500_percentage=1.0,
+        bond_rate=0.0,
+        inflation_rate=0.0,
+        sampling_mode="random",
+        random_seed=1,
+        returns_override=np.array([-0.50], dtype=np.float64),
+    )
+    expected = (1_000.0 - 100.0) * 0.5
+    assert result.final_balances[0] == pytest.approx(expected, abs=1e-9)
+
+
+def test_historical_bond_mode_requires_bond_override_when_returns_are_overridden():
+    """Custom equity return overrides must provide matching bond overrides."""
+    with pytest.raises(
+        ValueError,
+        match="requires bond_returns_override",
+    ):
+        run_simulation_mp(
+            n_sims=10,
+            n_years=5,
+            initial_balance=1_000_000,
+            withdrawal=0,
+            withdrawal_negative_year=0,
+            sp500_percentage=0.5,
+            bond_return_mode="historical",
+            returns_override=np.array([0.01, 0.02, -0.03, 0.04, 0.00], dtype=np.float64),
+        )
+
+
+def test_historical_bond_mode_adds_variability_for_all_bond_portfolio():
+    """100% bonds with historical mode should have dispersion unlike fixed mode."""
+    base_params = {
+        "n_sims": 300,
+        "n_years": 20,
+        "initial_balance": 1_000_000,
+        "withdrawal": 40_000,
+        "withdrawal_negative_year": 40_000,
+        "sp500_percentage": 0.0,
+        "sampling_mode": "block_bootstrap",
+        "block_bootstrap_size": 5,
+        "random_seed": 42,
+    }
+
+    fixed = run_simulation_mp(**base_params, bond_return_mode="fixed", bond_rate=0.04)
+    historical = run_simulation_mp(**base_params, bond_return_mode="historical")
+
+    assert fixed.std_final == pytest.approx(0.0, abs=1e-9)
+    assert historical.std_final > 0.0
+
+
+def test_historical_bond_sampling_uses_same_indices_as_equity_sampling():
+    """When equity and bond overrides are equal, blended return should match them exactly."""
+    series = np.array([0.10, -0.20, 0.05, 0.03], dtype=np.float64)
+    seed = 7
+    result = run_simulation_mp(
+        n_sims=1,
+        n_workers=1,
+        chunk_size=1,
+        n_years=4,
+        initial_balance=1_000.0,
+        withdrawal=0.0,
+        withdrawal_negative_year=0.0,
+        sp500_percentage=0.5,
+        inflation_rate=0.0,
+        sampling_mode="random",
+        random_seed=seed,
+        bond_return_mode="historical",
+        returns_override=series,
+        bond_returns_override=series.copy(),
+    )
+    order = np.random.default_rng(seed).permutation(len(series))[:4]
+    sampled = series[order]
+    expected = 1_000.0 * float(np.prod(1.0 + sampled))
+    assert result.final_balances[0] == pytest.approx(expected, rel=1e-12)
+
+
 def test_mixed_portfolio_allocation():
     """Test that mixed stock/bond allocation works correctly."""
     params = {

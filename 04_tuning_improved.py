@@ -11,37 +11,45 @@ from tuning_run_results import (
 )
 
 # Thresholds for adaptive simulation
+# Tightened: lower acceptance + minimum sims for convergence so each trial's
+# prob_success has low SE, preventing the optimizer from picking lucky draws.
 STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilizes
-STD_ERROR_ACCEPTANCE = 0.005  # accept std_error if small enough
+STD_ERROR_ACCEPTANCE = 0.001  # 5x tighter than before (was 0.005)
+MIN_SIMS_FOR_CONVERGENCE = 200_000  # don't accept convergence below this
 
 # Constants
-INITIAL_BALANCE_RANGE = (3_800_000, 5_000_000) # Do not count the addition of buying a house. Only liquid assets.
+INITIAL_BALANCE_RANGE = (3_600_000, 4_200_000) # Do not count the addition of buying a house. Only liquid assets.
 INITIAL_BALANCE_STEP = 50_000
-WITHDRAWAL_RANGE = (95_000, 130_000)
-WITHDRAWAL_STEP = 5_000
-WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.88, 1.0)
-WITHDRAWAL_NEGATIVE_STEP = 0.04
-N_SIMS_RANGE = (50_000, 1_000_000)
+WITHDRAWAL_RANGE = (90_000, 110_000)
+WITHDRAWAL_STEP = 2_000
+WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.90, 1.0)
+WITHDRAWAL_NEGATIVE_STEP = 0.02
+N_SIMS_RANGE = (50_000, 1_500_000)  # min for pruning; higher ceiling for hard-to-converge trials
 STEP_N_SIMS = 50_000
 TRIAL_COUNT = 5_000 # Higher trial count is more accurate, but slower (5,000 is for testing, 20,000 is for production)
 STORAGE_PATH = "sqlite:///db.sqlite3"
 STUDY_NAME = (
-    "retirement_tuning_study_v127"  # ⚠️ CHANGED: Fixed bugs + progressive batching + pruning
+    "retirement_tuning_study_v14"  # ⚠️ v14: nominal returns, block bootstrap, tighter convergence
 )
 RESULTS_JSON_PATH = f"results/{STUDY_NAME}_meta.json"
-REAL_LIFE_CONSTRAINTS = False
-RETIREMENT_YEARS = 45
+# Sampling mode for historical returns:
+#   "block_bootstrap" (default, recommended) — preserves multi-year crash regimes
+#   "random"                                  — single-year, no autocorrelation
+#   "constrained"                             — bounded streak constraints
+SAMPLING_MODE = "block_bootstrap"
+BLOCK_BOOTSTRAP_SIZE = 5  # block length in years
+RETIREMENT_YEARS = 40 # Simulation horizon: how many years the retirement model runs before declaring success/failure.
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.03  # Vanguard projection 10 years worse case as of November 2025: 0.026
-BOND_RATE = 0.03  # Bond rate for 2 years as of November 2025: 0.034
+INFLATION_RATE = 0.036  # Unified across all simulations (see 05_target_year_budget.py)
+BOND_RATE = 0.036  # Nominal; earns 0% real at equal inflation — conservative
 
-YEARS_WITHOUT_SOCIAL_SECURITY = 20 # Social security starts at 62, median retirement age is 65, so assume 20 years without social security for conservative planning
+YEARS_WITHOUT_SOCIAL_SECURITY = 18 # Social security starts at 62, median retirement age is 65, so assume 20 years without social security for conservative planning
 SOCIAL_SECURITY_MONEY = 40_000  # per year
 
 YEARS_WITH_SUPPLEMENTAL_INCOME = 12  # Spouse working
-SUPPLEMENTAL_INCOME = 20_000  # per year
+SUPPLEMENTAL_INCOME = 24_000  # per year
 
 # Random seed configuration
 # Set to None for production (explore different market scenarios each trial)
@@ -72,7 +80,7 @@ PROB_THRESHOLD_MAX = 1.0
 #   ├───────────┼───────────┼───────┼───────┤
 #   │ 100%      │ 1.00      │ 1.00  │ 1.00  │
 #   └───────────┴───────────┴───────┴───────┘
-PROB_THRESHOLD_STEEPNESS = 7
+PROB_THRESHOLD_STEEPNESS = 5
 
 # Pruning: Minimum acceptable probability to continue trial
 # Trials below this after initial batch are pruned (stopped early)
@@ -135,7 +143,8 @@ def objective(trial):
         simulation_data = run_simulation_mp(
             n_sims=batch_size,
             initial_balance=initial_balance,
-            random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
+            sampling_mode=SAMPLING_MODE,
+            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             withdrawal=withdrawal,
             withdrawal_negative_year=withdrawal_negative_year,
             n_years=RETIREMENT_YEARS,
@@ -186,10 +195,14 @@ def objective(trial):
             else float("inf")
         )
 
-        # Check convergence
-        if std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE or (
-            diff_compare_last != float("inf")
-            and diff_compare_last <= STD_ERROR_DIFF_THRESHOLD
+        # Only allow convergence break once we have enough sims for trial-to-trial
+        # comparisons to be stable. Prevents the optimizer from picking lucky 50K draws.
+        if n_sims_done >= MIN_SIMS_FOR_CONVERGENCE and (
+            std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE
+            or (
+                diff_compare_last != float("inf")
+                and diff_compare_last <= STD_ERROR_DIFF_THRESHOLD
+            )
         ):
             break
 
@@ -330,9 +343,7 @@ if __name__ == "__main__":
             f"  Withdrawal ratio: {best_params['withdrawal_percentage_when_negative_year']:.2f}"
         )
         print(f"  Retirement years: {RETIREMENT_YEARS} years")
-        print(
-            f"  Random with real life constraints: {'Yes' if REAL_LIFE_CONSTRAINTS else 'No'}"
-        )
+        print(f"  Sampling mode: {SAMPLING_MODE} (block size: {BLOCK_BOOTSTRAP_SIZE})")
         print(
             f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
         )
@@ -375,7 +386,8 @@ if __name__ == "__main__":
             initial_balance=best_params["initial_balance"],
             withdrawal=best_params["withdrawal"],
             withdrawal_negative_year=withdrawal_negative_year,
-            random_with_real_life_constraints=REAL_LIFE_CONSTRAINTS,
+            sampling_mode=SAMPLING_MODE,
+            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             sp500_percentage=best_params["sp500_percentage"],
             bond_rate=BOND_RATE,
             n_years=RETIREMENT_YEARS,
@@ -408,6 +420,9 @@ if __name__ == "__main__":
         "script": "04_tuning_improved.py",
         "STD_ERROR_DIFF_THRESHOLD": STD_ERROR_DIFF_THRESHOLD,
         "STD_ERROR_ACCEPTANCE": STD_ERROR_ACCEPTANCE,
+        "MIN_SIMS_FOR_CONVERGENCE": MIN_SIMS_FOR_CONVERGENCE,
+        "SAMPLING_MODE": SAMPLING_MODE,
+        "BLOCK_BOOTSTRAP_SIZE": BLOCK_BOOTSTRAP_SIZE,
         "INITIAL_BALANCE_RANGE": list(INITIAL_BALANCE_RANGE),
         "INITIAL_BALANCE_STEP": INITIAL_BALANCE_STEP,
         "WITHDRAWAL_RANGE": list(WITHDRAWAL_RANGE),
@@ -421,7 +436,6 @@ if __name__ == "__main__":
         "TRIAL_COUNT": TRIAL_COUNT,
         "STORAGE_PATH": STORAGE_PATH,
         "STUDY_NAME": STUDY_NAME,
-        "REAL_LIFE_CONSTRAINTS": REAL_LIFE_CONSTRAINTS,
         "RETIREMENT_YEARS": RETIREMENT_YEARS,
         "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN,
         "PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX": PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX,
