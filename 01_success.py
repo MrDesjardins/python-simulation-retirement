@@ -38,7 +38,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 def main() -> None:
     cfg = BASELINE_SUCCESS_SCRIPT
-    n_sims = _env_int("N_SIMS", 6_000_000)
+    n_sims = _env_int("N_SIMS", 10_000_000)
     cap = _env_int("HIST_CAP", 100_000_000)
     bin_width = _env_int("HIST_BIN_WIDTH", 1_000_000)
     show_plot = _env_flag("SHOW_PLOT", True)
