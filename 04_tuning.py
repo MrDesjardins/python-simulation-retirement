@@ -2,6 +2,21 @@ import time
 import optuna
 import numpy as np
 from common import exponential, format_withdrawal_breakdown, inverse_exponential, run_simulation_mp
+from simulation_convergence import (
+    MIN_SIMS_FOR_CONVERGENCE,
+    PROB_SUCCESS_SE_ACCEPTANCE,
+    PROB_SUCCESS_SE_DIFF_THRESHOLD,
+    cumulative_success_metrics,
+    prob_convergence_should_stop,
+)
+from simulation_scenario import (
+    TUNING_BLOCK_BOOTSTRAP_SIZE,
+    TUNING_BOND_RATE,
+    TUNING_INFLATION_RATE,
+    TUNING_RETIREMENT_YEARS,
+    TUNING_SAMPLING_MODE,
+    tuning_run_simulation_common_kwargs,
+)
 from tuning_run_results import (
     build_run_results,
     export_run_results_sidecars,
@@ -10,11 +25,8 @@ from tuning_run_results import (
     trials_to_dataframe,
 )
 
-# Thresholds for adaptive simulation
-# Tightened to match 04_tuning_improved.py / 05_target_year_budget.py.
-STD_ERROR_DIFF_THRESHOLD = 0.01  # stop increasing n_sims if std_error stabilizes
-STD_ERROR_ACCEPTANCE = 0.001  # 5x tighter than before (was 0.005)
-MIN_SIMS_FOR_CONVERGENCE = 200_000  # don't accept convergence below this
+# Thresholds for adaptive simulation (success-rate SE, not mean-balance SE).
+# See simulation_convergence.py.
 
 # Constants
 INITIAL_BALANCE_RANGE = (4_000_000, 10_000_000)
@@ -31,14 +43,14 @@ STUDY_NAME = (
     "retirement_tuning_study_v108"  # ⚠️ v108: nominal returns, block bootstrap, tighter convergence
 )
 RESULTS_JSON_PATH = f"results/{STUDY_NAME}_meta.json"
-SAMPLING_MODE = "block_bootstrap"
-BLOCK_BOOTSTRAP_SIZE = 5
-RETIREMENT_YEARS = 40
+SAMPLING_MODE = TUNING_SAMPLING_MODE
+BLOCK_BOOTSTRAP_SIZE = TUNING_BLOCK_BOOTSTRAP_SIZE
+RETIREMENT_YEARS = TUNING_RETIREMENT_YEARS
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MIN = 0.7
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_MAX = 1.0
 PERCENTAGE_INVESTMENT_IN_STOCKS_VS_BOND_STEP = 0.05
-INFLATION_RATE = 0.036  # Unified across all simulations (see 05_target_year_budget.py)
-BOND_RATE = 0.036  # Nominal; earns 0% real at equal inflation — conservative
+INFLATION_RATE = TUNING_INFLATION_RATE
+BOND_RATE = TUNING_BOND_RATE
 
 YEARS_WITHOUT_SOCIAL_SECURITY = 20
 SOCIAL_SECURITY_MONEY = 50_000  # per year
@@ -79,49 +91,37 @@ def objective(trial):
     n_sims = N_SIMS_RANGE[0]
     max_n_sims = N_SIMS_RANGE[1]
     step_n_sims = STEP_N_SIMS
-    last_std_error = float("inf")
+    last_prob_se = float("inf")
 
     while n_sims <= max_n_sims:
         simulation_data = run_simulation_mp(
             n_sims=n_sims,
             initial_balance=initial_balance,
-            sampling_mode=SAMPLING_MODE,
-            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             withdrawal=withdrawal,
             withdrawal_negative_year=withdrawal_negative_year,
-            n_years=RETIREMENT_YEARS,
             sp500_percentage=sp500_percentage,
-            bond_rate=BOND_RATE,
-            inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
             wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
             wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
             me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
             me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
+            **tuning_run_simulation_common_kwargs(),
         )
 
-        std_error = simulation_data.std_error
-        diff_compare_last = (
-            (last_std_error - std_error) / last_std_error
-            if last_std_error != float("inf")
-            else float("inf")
+        _p_hat, prob_se, _succ = cumulative_success_metrics(simulation_data.final_balances)
+        should_stop, _reason = prob_convergence_should_stop(
+            n_done=n_sims,
+            prob_se=prob_se,
+            prev_prob_se=last_prob_se,
+            min_sims=MIN_SIMS_FOR_CONVERGENCE,
+            se_acceptance=PROB_SUCCESS_SE_ACCEPTANCE,
+            se_diff_threshold=PROB_SUCCESS_SE_DIFF_THRESHOLD,
         )
-
-        std_error_relative_to_mean = std_error / simulation_data.final_balances.mean()
-
-        # Stop only once we have enough sims for trial-to-trial comparisons
-        # to be stable (prevents overfitting on lucky 50K draws).
-        if n_sims >= MIN_SIMS_FOR_CONVERGENCE and (
-            std_error_relative_to_mean <= STD_ERROR_ACCEPTANCE
-            or (
-                diff_compare_last != float("inf")
-                and diff_compare_last <= STD_ERROR_DIFF_THRESHOLD
-            )
-        ):
+        if should_stop:
             break
 
-        last_std_error = std_error
+        last_prob_se = prob_se
         n_sims += step_n_sims
 
     # Store how many simulations were used for this trial
@@ -295,25 +295,22 @@ if __name__ == "__main__":
             initial_balance=best_params["initial_balance"],
             withdrawal=best_params["withdrawal"],
             withdrawal_negative_year=best_params["withdrawal_negative_year"],
-            sampling_mode=SAMPLING_MODE,
-            block_bootstrap_size=BLOCK_BOOTSTRAP_SIZE,
             sp500_percentage=best_params["sp500_percentage"],
-            bond_rate=BOND_RATE,
-            n_years=RETIREMENT_YEARS,
-            inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
             wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
             wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
             me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
             me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
+            **tuning_run_simulation_common_kwargs(),
         )
         print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
-        print(f"Standard Deviation: ${final_data.std_final:,.0f}")
-        print(f"Standard error: ${final_data.std_error:,.0f}")
-        print(
-            f"Relative Standard Error: {final_data.std_error / final_data.final_balances.mean():.3%}"
-        )
+        print(f"Success rate SE (binomial): {final_data.probability_of_success_se:.4%}")
+        print(f"Standard Deviation (ending balance): ${final_data.std_final:,.0f}")
+        print(f"Standard error of mean ending balance: ${final_data.std_error:,.0f}")
+        mf = float(final_data.final_balances.mean())
+        if mf != 0.0:
+            print(f"Relative SE (mean ending balance): {final_data.std_error / mf:.3%}")
 
         final_data.print_stats()
         validation_summary = simulation_data_summary(final_data)
@@ -325,8 +322,8 @@ if __name__ == "__main__":
 
     fixed_config = {
         "script": "04_tuning.py",
-        "STD_ERROR_DIFF_THRESHOLD": STD_ERROR_DIFF_THRESHOLD,
-        "STD_ERROR_ACCEPTANCE": STD_ERROR_ACCEPTANCE,
+        "PROB_SUCCESS_SE_DIFF_THRESHOLD": PROB_SUCCESS_SE_DIFF_THRESHOLD,
+        "PROB_SUCCESS_SE_ACCEPTANCE": PROB_SUCCESS_SE_ACCEPTANCE,
         "MIN_SIMS_FOR_CONVERGENCE": MIN_SIMS_FOR_CONVERGENCE,
         "SAMPLING_MODE": SAMPLING_MODE,
         "BLOCK_BOOTSTRAP_SIZE": BLOCK_BOOTSTRAP_SIZE,

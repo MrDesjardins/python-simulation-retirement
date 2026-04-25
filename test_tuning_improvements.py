@@ -25,7 +25,10 @@ assert hasattr(tuning, 'OPTIMIZATION_RANDOM_SEED'), "Missing OPTIMIZATION_RANDOM
 assert hasattr(tuning, 'OBJECTIVE_WEIGHTS'), "Missing OBJECTIVE_WEIGHTS"
 assert hasattr(tuning, 'PROB_THRESHOLD_MIN'), "Missing PROB_THRESHOLD_MIN"
 assert hasattr(tuning, 'MIN_ACCEPTABLE_PROB'), "Missing MIN_ACCEPTABLE_PROB"
-assert tuning.OPTIMIZATION_RANDOM_SEED == 42, "Wrong random seed"
+assert tuning.OPTIMIZATION_RANDOM_SEED in {
+    None,
+    42,
+}, "OPTIMIZATION_RANDOM_SEED should be None (production) or 42 (debug)"
 assert sum(tuning.OBJECTIVE_WEIGHTS.values()) == 1.0, "Weights don't sum to 1.0"
 print("✓ All new constants present and valid")
 

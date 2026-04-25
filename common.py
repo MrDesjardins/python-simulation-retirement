@@ -1,4 +1,5 @@
 import time
+import warnings
 from dataclasses import dataclass
 from multiprocessing import Pool, cpu_count
 from typing import Literal, Optional
@@ -14,6 +15,34 @@ SamplingMode = Literal["random", "constrained", "block_bootstrap"]
 BondReturnMode = Literal["fixed", "historical"]
 
 
+def wilson_score_interval(
+    successes: int, trials: int, z: float = 1.96
+) -> tuple[float, float]:
+    """
+    Wilson score interval for a binomial proportion (more stable than normal
+    approximation near 0 or 1).
+    """
+    if trials <= 0:
+        return (float("nan"), float("nan"))
+    if successes < 0 or successes > trials:
+        raise ValueError(
+            f"successes must be in [0, trials], got successes={successes}, trials={trials}"
+        )
+    p = successes / trials
+    z2 = z * z
+    denom = 1.0 + z2 / trials
+    centre = (p + z2 / (2.0 * trials)) / denom
+    inner = p * (1.0 - p) / trials + z2 / (4.0 * trials * trials)
+    half_width = z * math.sqrt(max(inner, 0.0)) / denom
+    return (max(0.0, centre - half_width), min(1.0, centre + half_width))
+
+
+def binomial_proportion_standard_error(p: float, n: int) -> float:
+    if n <= 0:
+        return float("nan")
+    return float(math.sqrt(max(p * (1.0 - p) / n, 0.0)))
+
+
 class SimulationData:
     def __init__(
         self,
@@ -26,6 +55,16 @@ class SimulationData:
         trajectories,
         total_years,
         returns_by_year,
+        *,
+        go_back_year: int = 0,
+        reserve_floor: Optional[float] = None,
+        sampling_mode: Optional[str] = None,
+        block_bootstrap_size: Optional[int] = None,
+        bond_return_mode: Optional[str] = None,
+        inflation_rate: Optional[float] = None,
+        bond_rate: Optional[float] = None,
+        annual_expense_ratio: float = 0.0,
+        overlapping_windows_note: Optional[str] = None,
     ):
         self.initial_balance = initial_balance
         self.withdrawal = withdrawal
@@ -36,7 +75,37 @@ class SimulationData:
         self.trajectories = trajectories
         self.total_years = total_years
         self.returns_by_year = returns_by_year
-        self.probability_of_success = np.mean(final_balances > 0)
+        self.go_back_year = go_back_year
+        self.reserve_floor = reserve_floor
+        self.sampling_mode = sampling_mode
+        self.block_bootstrap_size = block_bootstrap_size
+        self.bond_return_mode = bond_return_mode
+        self.inflation_rate = inflation_rate
+        self.bond_rate = bond_rate
+        self.annual_expense_ratio = annual_expense_ratio
+        self.overlapping_windows_note = overlapping_windows_note
+
+        successes_arr = final_balances > 0
+        self.success_count = int(np.sum(successes_arr))
+        self.probability_of_success = float(np.mean(successes_arr))
+        self.probability_of_success_se = binomial_proportion_standard_error(
+            self.probability_of_success, n_sims
+        )
+        self.wilson_success_95 = wilson_score_interval(
+            self.success_count, n_sims, z=1.96
+        )
+        self.wilson_success_99 = wilson_score_interval(
+            self.success_count, n_sims, z=2.576
+        )
+
+        if reserve_floor is not None and reserve_floor < 0:
+            raise ValueError(f"reserve_floor must be >= 0, got {reserve_floor}")
+        self.probability_below_reserve_floor: Optional[float] = (
+            float(np.mean(final_balances < float(reserve_floor)))
+            if reserve_floor is not None
+            else None
+        )
+
         self.std_final = np.std(
             final_balances, ddof=1
         )  # ddof=1 for sample standard deviation
@@ -49,34 +118,32 @@ class SimulationData:
         percentile_list = [1, 25, 50, 75, 99]
         percentiles = np.percentile(self.final_balances, percentile_list)
         std_final = self.std_final
-        
-        z95 = 1.96 # 95% confidence interval
-        z99 = 2.576 # 99% confidence interval
+
+        z95 = 1.96  # 95% confidence interval
+        z99 = 2.576  # 99% confidence interval
         n = len(self.final_balances)
         ci_lower_95 = mean_final - z95 * (std_final / np.sqrt(n))
         ci_upper_95 = mean_final + z95 * (std_final / np.sqrt(n))
         ci_lower_99 = mean_final - z99 * (std_final / np.sqrt(n))
         ci_upper_99 = mean_final + z99 * (std_final / np.sqrt(n))
 
-        # Define bin edges
-        # bins = [-float("inf"), -0.20, -0.10, 0, 0.10, 0.20, float("inf")]
-        # labels = [
-        #     "< -20%",
-        #     "-20% to -10%",
-        #     "-10% to 0%",
-        #     "0% to 10%",
-        #     "10% to 20%",
-        #     "20% +",
-        # ]
-        # binned = pd.cut(self.returns_by_year, bins=bins, labels=labels)
-        # print(
-        #     f"The simulation starts using a portfolio balance of ${self.initial_balance:,.0f}."
-        # )
-        # print(f"There is {self.total_years} years of historical return data.")
-        # print("Return distribution over historical years:")
-        # print(binned.value_counts().sort_index())
         print(
-            f"\nProbability portfolio survives {self.n_years} years: {prob_success:.2%} if withdrawing ${self.withdrawal:,.0f} per year and in negative years ${self.withdrawal_negative_year:,.0f} per year."
+            f"\nProbability portfolio survives {self.n_years} years: {prob_success:.2%} "
+            f"if withdrawing ${self.withdrawal:,.0f} per year and in negative years "
+            f"${self.withdrawal_negative_year:,.0f} per year."
+        )
+        print(
+            f"  Success rate SE (binomial): {self.probability_of_success_se:.4%} "
+            f"(n={self.n_sims:,}, successes={self.success_count:,})"
+        )
+        w95_lo, w95_hi = self.wilson_success_95
+        w99_lo, w99_hi = self.wilson_success_99
+        print(
+            f"  Wilson 95% interval for P(success): {w95_lo:.2%} – {w95_hi:.2%} "
+            f"(not the same as mean-balance CIs below)"
+        )
+        print(
+            f"  Wilson 99% interval for P(success): {w99_lo:.2%} – {w99_hi:.2%}"
         )
 
         # Separate the three categories
@@ -92,43 +159,118 @@ class SimulationData:
         )
         print(f"Standard deviation of ending balances: ${std_final:,.0f}")
         print(f"Mean ending balance: ${mean_final:,.0f}")
-        print(f"Standard error: ${self.std_error:,.0f}")
-        print(f"Standard error / mean: {self.std_error / mean_final:.3%}")
         print(
-            f"95% confidence interval for the mean: ${ci_lower_95:,.0f} – ${ci_upper_95:,.0f}"
+            "Standard error of mean ending balance: "
+            f"${self.std_error:,.0f} (this is NOT the SE of P(success))"
         )
-        print(f"99% confidence interval for the mean: ${ci_lower_99:,.0f} – ${ci_upper_99:,.0f}")
-        # Compute year-over-year changes`
+        if mean_final != 0.0:
+            print(f"Standard error / mean (ending balance): {self.std_error / mean_final:.3%}")
+        else:
+            print("Standard error / mean (ending balance): N/A (mean is zero)")
+        print(
+            f"95% CI for mean ending balance: ${ci_lower_95:,.0f} – ${ci_upper_95:,.0f}"
+        )
+        print(
+            f"99% CI for mean ending balance: ${ci_lower_99:,.0f} – ${ci_upper_99:,.0f}"
+        )
+
+        self.print_model_risk_summary()
+
         if self.trajectories is not None:
             np.set_printoptions(suppress=True, precision=2, linewidth=150)
 
+            # Year-over-year *balance* change (withdrawals + returns), not market sign.
             yearly_change = self.trajectories[:, 1:] - self.trajectories[:, :-1]
-
-            # print(yearly_change)
-            # Boolean array: True if negative change (loss)
-            loss_years = yearly_change < 0
-            # Sliding window of length along years
+            balance_declined = yearly_change < 0
             window_size = 5
             windows = np.lib.stride_tricks.sliding_window_view(
-                loss_years, window_size, axis=1
+                balance_declined, window_size, axis=1
             )
 
-            consecutive_year_lost = np.all(
-                windows, axis=2
-            )  # shape: (n_sims, n_years - window_size + 1)
+            consecutive_balance_down = np.all(windows, axis=2)
 
-            sim_with_year_neg = np.any(consecutive_year_lost, axis=1)
+            sim_balance_down_streak = np.any(consecutive_balance_down, axis=1)
 
             print(
-                f"{np.sum(sim_with_year_neg)} simulations ({np.sum(sim_with_year_neg) / len(sim_with_year_neg):.1%}) had {window_size} or more consecutive negative years."
+                f"{np.sum(sim_balance_down_streak)} simulations "
+                f"({np.sum(sim_balance_down_streak) / len(sim_balance_down_streak):.1%}) "
+                f"had {window_size} or more consecutive years where ending balance "
+                f"fell below the prior year (not the same as 'negative market years')."
             )
-            frac_loss = np.sum(loss_years, axis=1) / loss_years.shape[1]
+            frac_decline = np.sum(balance_declined, axis=1) / balance_declined.shape[1]
 
-            sim_more_than_50pct_loss = frac_loss > 0.5
+            sim_more_than_50pct_decline = frac_decline > 0.5
 
             print(
-                f"{np.sum(sim_more_than_50pct_loss)} simulations ({np.sum(sim_more_than_50pct_loss) / len(sim_more_than_50pct_loss):.1%}) had more than 50% negative years."
+                f"{np.sum(sim_more_than_50pct_decline)} simulations "
+                f"({np.sum(sim_more_than_50pct_decline) / len(sim_more_than_50pct_decline):.1%}) "
+                f"had balance decline in more than 50% of years."
             )
+
+            self._print_depletion_timing_summary()
+
+    def print_model_risk_summary(self) -> None:
+        """Explicit assumptions and interpretation caveats."""
+        print("\n--- Model risk / assumptions ---")
+        if self.go_back_year and self.go_back_year > 0:
+            print(
+                f"  WARNING: go_back_year={self.go_back_year} — early years reset balance "
+                f"to initial when below initial (external bailout / 'go back' rule)."
+            )
+        else:
+            print("  go_back_year: 0 (no early reset-to-initial bailout)")
+        if self.overlapping_windows_note:
+            print(f"  Historical windows: {self.overlapping_windows_note}")
+        if self.sampling_mode is not None:
+            line = f"  sampling_mode: {self.sampling_mode}"
+            if self.block_bootstrap_size is not None and self.sampling_mode == "block_bootstrap":
+                line += f" (block_bootstrap_size={self.block_bootstrap_size})"
+            print(line)
+        if self.bond_return_mode is not None:
+            print(f"  bond_return_mode: {self.bond_return_mode}")
+        if self.bond_return_mode == "fixed" and self.bond_rate is not None:
+            print(f"  bond_rate (nominal, fixed): {self.bond_rate:.2%}")
+        elif self.bond_return_mode == "historical":
+            print("  bond: nominal returns co-sampled with equities from Shiller history")
+        if self.inflation_rate is not None:
+            print(f"  inflation_rate (deterministic): {self.inflation_rate:.2%}")
+        print(f"  annual_expense_ratio (drag on return): {self.annual_expense_ratio:.2%}")
+        print(
+            "  Taxes: not modeled — withdrawals are nominal; net after-tax spending "
+            "should be reflected in withdrawal inputs if needed."
+        )
+        if self.reserve_floor is not None and self.probability_below_reserve_floor is not None:
+            print(
+                f"  P(ending balance < reserve floor ${self.reserve_floor:,.0f}): "
+                f"{self.probability_below_reserve_floor:.2%}"
+            )
+        print(
+            "  Timestep: annual; no intra-year path; US Shiller-based returns; "
+            "see run_simulation_mp docstring for full list."
+        )
+
+    def _print_depletion_timing_summary(self) -> None:
+        """If trajectories exist, summarize first year balance hits zero (if ever)."""
+        if self.trajectories is None:
+            return
+        traj = self.trajectories
+        # Years 1..n_years map to traj columns 1..n_years (column 0 is start).
+        hit = traj <= 0
+        any_hit = np.any(hit, axis=1)
+        if not np.any(any_hit):
+            print(
+                "\nDepletion timing: no simulated paths reached ≤ $0 within the horizon."
+            )
+            return
+        first_idx = np.argmax(hit, axis=1)
+        # Only count sims that actually hit
+        first_idx = np.where(any_hit, first_idx, -1)
+        depletion_years = first_idx[first_idx >= 0]
+        print(
+            f"\nDepletion timing (among {np.sum(any_hit):,} paths that hit ≤ $0): "
+            f"median first year index (0=start) = {float(np.median(depletion_years)):.1f}, "
+            f"25th–75th pct years = {np.percentile(depletion_years, [25, 75])!s}"
+        )
 
 
 @dataclass(frozen=True)
@@ -535,6 +677,8 @@ _ME_YEARS_WITH_SUPPLEMENTAL_INCOME: int
 _ME_SUPPLEMENTAL_INCOME: float
 _HEDGING_CONFIG: HedgingConfig
 _HEDGE_PERIODS_PER_YEAR: int
+_ANNUAL_EXPENSE_RATIO: float
+
 
 def _init_worker(
     returns: np.ndarray,
@@ -557,13 +701,14 @@ def _init_worker(
     me_years_with_supplemental_income: int,
     me_supplemental_income: float,
     hedging_config: HedgingConfig,
+    annual_expense_ratio: float,
 ):
     global _RETURNS, _BOND_RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
         _SAMPLING_MODE, _BLOCK_BOOTSTRAP_SIZE, _SP500_PERCENTAGE, _BOND_RATE, _BOND_RETURN_MODE, _INFLATION_RATE, \
         _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY, \
         _WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME, _WIFE_SUPPLEMENTAL_INCOME, \
         _ME_YEARS_WITH_SUPPLEMENTAL_INCOME, _ME_SUPPLEMENTAL_INCOME, \
-        _HEDGING_CONFIG, _HEDGE_PERIODS_PER_YEAR
+        _HEDGING_CONFIG, _HEDGE_PERIODS_PER_YEAR, _ANNUAL_EXPENSE_RATIO
     _RETURNS = returns
     _BOND_RETURNS = bond_returns
     _N_YEARS = n_years
@@ -587,6 +732,7 @@ def _init_worker(
     _HEDGE_PERIODS_PER_YEAR = periods_per_year_from_frequency(
         hedging_config.rebalance_frequency
     )
+    _ANNUAL_EXPENSE_RATIO = float(annual_expense_ratio)
 
 def _simulate_chunk(args):
     """
@@ -708,6 +854,8 @@ def _simulate_chunk(args):
                 _HEDGE_PERIODS_PER_YEAR,
             )
 
+        portfolio_return = portfolio_return - _ANNUAL_EXPENSE_RATIO
+
         # Compute portfolio growth using linear allocation
         portfolio_growth = 1 + portfolio_return
 
@@ -757,6 +905,8 @@ def run_simulation_mp(
     hedging_config: Optional[HedgingConfig] = None,
     returns_override: Optional[np.ndarray] = None,
     bond_returns_override: Optional[np.ndarray] = None,
+    annual_expense_ratio: float = 0.0,
+    reserve_floor: Optional[float] = None,
 ):
     """
     Run Monte Carlo retirement portfolio simulations using multiprocessing.
@@ -847,6 +997,9 @@ def run_simulation_mp(
         returns_override: Optional equity return series override.
         bond_returns_override: Optional bond return series override for
             bond_return_mode="historical". Must match equity series length.
+        annual_expense_ratio: Annual advisory + fund expense drag subtracted from
+            each year's portfolio return (simple haircut; not tax-aware).
+        reserve_floor: If set, report P(final balance < this floor) on SimulationData.
 
     Returns:
         SimulationData object containing results, statistics, and optional trajectories
@@ -910,7 +1063,6 @@ def run_simulation_mp(
             f"withdrawal_negative_year cannot be negative, got {withdrawal_negative_year}"
         )
     if withdrawal_negative_year > withdrawal:
-        import warnings
         warnings.warn(
             f"withdrawal_negative_year ({withdrawal_negative_year}) > withdrawal ({withdrawal}). "
             "This means withdrawing MORE in down markets, which is unusual."
@@ -946,6 +1098,25 @@ def run_simulation_mp(
     if me_supplemental_income < 0:
         raise ValueError(
             f"me_supplemental_income cannot be negative, got {me_supplemental_income}"
+        )
+    if annual_expense_ratio < 0.0:
+        raise ValueError(
+            f"annual_expense_ratio cannot be negative, got {annual_expense_ratio}"
+        )
+    if annual_expense_ratio >= 1.0:
+        raise ValueError(
+            f"annual_expense_ratio must be < 1.0 (fraction of assets), got {annual_expense_ratio}"
+        )
+    if reserve_floor is not None and reserve_floor < 0:
+        raise ValueError(f"reserve_floor must be >= 0 when set, got {reserve_floor}")
+
+    if go_back_year > 0:
+        warnings.warn(
+            f"go_back_year={go_back_year}: balances reset to initial_balance when "
+            f"below initial in the first {go_back_year} years — this is not a standard "
+            f"retirement assumption and can inflate success rates.",
+            UserWarning,
+            stacklevel=2,
         )
 
     if hedging_config is None:
@@ -1022,6 +1193,7 @@ def run_simulation_mp(
             me_years_with_supplemental_income,
             me_supplemental_income,
             hedging_config,
+            annual_expense_ratio,
         ),
     ) as pool:
         results = pool.map(_simulate_chunk, tasks)
@@ -1066,7 +1238,16 @@ def run_simulation_mp(
         final_balances,
         trajectories,
         total_years,
-        returns_by_year=returns,
+        returns,
+        go_back_year=go_back_year,
+        reserve_floor=reserve_floor,
+        sampling_mode=str(sampling_mode),
+        block_bootstrap_size=block_bootstrap_size,
+        bond_return_mode=str(bond_return_mode),
+        inflation_rate=inflation_rate,
+        bond_rate=bond_rate,
+        annual_expense_ratio=annual_expense_ratio,
+        overlapping_windows_note=None,
     )
 
 
@@ -1088,6 +1269,8 @@ def run_simulation_historical_real(
     me_years_with_supplemental_income=0,
     me_supplemental_income=0,
     hedging_config: Optional[HedgingConfig] = None,
+    annual_expense_ratio: float = 0.0,
+    reserve_floor: Optional[float] = None,
 ):
     """
     Run historical rolling-window backtesting using actual market sequences.
@@ -1109,6 +1292,25 @@ def run_simulation_historical_real(
         SimulationData object with results from all rolling windows
     """
     start_time = time.time()
+
+    if annual_expense_ratio < 0.0:
+        raise ValueError(
+            f"annual_expense_ratio cannot be negative, got {annual_expense_ratio}"
+        )
+    if annual_expense_ratio >= 1.0:
+        raise ValueError(
+            f"annual_expense_ratio must be < 1.0, got {annual_expense_ratio}"
+        )
+    if reserve_floor is not None and reserve_floor < 0:
+        raise ValueError(f"reserve_floor must be >= 0 when set, got {reserve_floor}")
+    if go_back_year > 0:
+        warnings.warn(
+            f"go_back_year={go_back_year}: balances reset to initial_balance when "
+            f"below initial in the first {go_back_year} years — not a standard "
+            f"retirement assumption.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     if hedging_config is None:
         hedging_config = HedgingConfig(
@@ -1221,6 +1423,8 @@ def run_simulation_historical_real(
                     periods_per_year,
                 )
 
+            portfolio_return = float(portfolio_return) - float(annual_expense_ratio)
+
             # Compute portfolio growth using linear allocation
             portfolio_growth = 1 + portfolio_return
 
@@ -1262,6 +1466,10 @@ def run_simulation_historical_real(
         for y in starting_years:
             print(f"Simulation starting in {y} failed (ending balance ≤ 0).")
 
+    overlap_note = (
+        f"rolling windows overlap — fraction failed is descriptive, not i.i.d. MC "
+        f"({n_sims} windows from one history)"
+    )
     return SimulationData(
         initial_balance,
         withdrawal,
@@ -1271,7 +1479,16 @@ def run_simulation_historical_real(
         final_balances,
         trajectories,
         total_years,
-        returns_by_year=returns,
+        returns,
+        go_back_year=go_back_year,
+        reserve_floor=reserve_floor,
+        sampling_mode="historical_rolling",
+        block_bootstrap_size=None,
+        bond_return_mode=str(bond_return_mode),
+        inflation_rate=inflation_rate,
+        bond_rate=bond_rate,
+        annual_expense_ratio=annual_expense_ratio,
+        overlapping_windows_note=overlap_note,
     )
 
 

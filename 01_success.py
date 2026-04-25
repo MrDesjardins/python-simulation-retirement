@@ -7,8 +7,9 @@ import matplotlib.ticker as mticker
 import numpy as np
 
 from common import format_withdrawal_breakdown, run_simulation_mp
+from simulation_scenario import BASELINE_SUCCESS_SCRIPT, format_config_lines
 
-# Sampling mode for historical returns:
+# Sampling mode for historical returns (overrides baseline if changed):
 #   "block_bootstrap" (default, recommended) — preserves multi-year crash regimes
 #   "random"                                  — single-year, no autocorrelation
 #   "constrained"                             — bounded streak constraints
@@ -36,64 +37,36 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def main() -> None:
-    # Keep this configurable: override with N_SIMS=... when needed.
-    # Example: N_SIMS=5000000 uv run 01_success.py
+    cfg = BASELINE_SUCCESS_SCRIPT
     n_sims = _env_int("N_SIMS", 6_000_000)
     cap = _env_int("HIST_CAP", 100_000_000)
     bin_width = _env_int("HIST_BIN_WIDTH", 1_000_000)
     show_plot = _env_flag("SHOW_PLOT", True)
-    withdrawal = 110_000  # 120k is 96k after taxes
-    withdrawal_negative_year = 95_000  # 100k is 80k after taxes
-    social_security_money = 48_000
-    years_without_social_security = 25
-    wife_years_with_supplemental_income = 14
-    wife_supplemental_income = 24_000
-    me_years_with_supplemental_income = 2
-    me_supplemental_income = 80_000
+
+    base_kw = cfg.run_simulation_mp_kwargs()
+    base_kw["sampling_mode"] = SAMPLING_MODE
+
+    for line in format_config_lines("Scenario (simulation_scenario + SAMPLING_MODE):", base_kw):
+        print(line)
 
     start_time = time.perf_counter()
     simulation_data = run_simulation_mp(
-        n_years=45,
-        return_trajectories=False,
         n_sims=n_sims,
-        initial_balance=4_000_000,  # Does not containt the 500k for house down payment
-        sampling_mode=SAMPLING_MODE,
-        withdrawal=withdrawal,
-        withdrawal_negative_year=withdrawal_negative_year,
-        random_with_real_life_constraints=False,
-        sp500_percentage=0.70,
-        bond_rate=0.03,  # Only if bond_return_mode is "fixed" (see below)
-        bond_return_mode="historical",
-        inflation_rate=0.03,
-        social_security_money=social_security_money,
-        years_without_social_security=years_without_social_security,
-        wife_years_with_supplemental_income=wife_years_with_supplemental_income,
-        wife_supplemental_income=wife_supplemental_income,
-        me_years_with_supplemental_income=me_years_with_supplemental_income,
-        me_supplemental_income=me_supplemental_income,
+        return_trajectories=False,
+        **base_kw,
     )
     end_time = time.perf_counter()
     print(
         "Run config: "
         f"n_sims={n_sims:,}, sampling_mode={SAMPLING_MODE}, "
-        "bond_return_mode=historical, "
+        f"bond_return_mode={cfg.bond_return_mode}, "
         "withdrawal_switch=prior_year_portfolio_return, "
         "timestep=annual"
     )
     print(
         "Model note: annual timestep approximation (no intra-year cashflow/price path modeling)."
     )
-    for line in format_withdrawal_breakdown(
-        withdrawal=withdrawal,
-        withdrawal_negative_year=withdrawal_negative_year,
-        wife_supplemental_income=wife_supplemental_income,
-        wife_years_with_supplemental_income=wife_years_with_supplemental_income,
-        me_supplemental_income=me_supplemental_income,
-        me_years_with_supplemental_income=me_years_with_supplemental_income,
-        social_security_money=social_security_money,
-        years_without_social_security=years_without_social_security,
-        n_years=40,
-    ):
+    for line in format_withdrawal_breakdown(**cfg.format_withdrawal_breakdown_kwargs()):
         print(line)
     print(f"Total simulation time: {end_time - start_time:.2f} seconds")
     simulation_data.print_stats()
