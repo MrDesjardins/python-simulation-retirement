@@ -16,8 +16,10 @@ simulation_data = run_simulation_mp(
     inflation_rate=0.025,
     social_security_money=50_000,
     years_without_social_security=18,
-    years_with_supplemental_income=12,
-    supplemental_income=30_000,
+    wife_years_with_supplemental_income=12,
+    wife_supplemental_income=30_000,
+    me_years_with_supplemental_income=0,
+    me_supplemental_income=0,
 )
 simulation_data.print_stats()
 trajectories = simulation_data.trajectories

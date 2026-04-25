@@ -22,8 +22,10 @@ result1 = run_simulation_mp(
     bond_rate=0.04,
     social_security_money=30_000,
     years_without_social_security=20,
-    supplemental_income=20_000,
-    years_with_supplemental_income=10,
+    wife_supplemental_income=20_000,
+    wife_years_with_supplemental_income=10,
+    me_supplemental_income=0,
+    me_years_with_supplemental_income=0,
 )
 print(f"✓ Probability of success: {result1.probability_of_success:.2%}")
 print(f"✓ Mean final balance: ${result1.final_balances.mean():,.0f}")
@@ -41,8 +43,10 @@ result2 = run_simulation_mp(
     bond_rate=0.04,
     social_security_money=30_000,
     years_without_social_security=20,
-    supplemental_income=20_000,
-    years_with_supplemental_income=10,
+    wife_supplemental_income=20_000,
+    wife_years_with_supplemental_income=10,
+    me_supplemental_income=0,
+    me_years_with_supplemental_income=0,
 )
 
 if np.array_equal(result1.final_balances, result2.final_balances):

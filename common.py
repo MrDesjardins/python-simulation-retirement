@@ -46,7 +46,7 @@ class SimulationData:
         prob_success = self.probability_of_success
         mean_final = np.mean(self.final_balances)
         median_final = np.median(self.final_balances)
-        percentile_list = [10, 25, 50, 75, 90]
+        percentile_list = [1, 25, 50, 75, 99]
         percentiles = np.percentile(self.final_balances, percentile_list)
         std_final = self.std_final
         
@@ -438,16 +438,20 @@ def format_withdrawal_breakdown(
     *,
     withdrawal: float,
     withdrawal_negative_year: float,
-    supplemental_income: float,
-    years_with_supplemental_income: int,
+    wife_supplemental_income: float,
+    wife_years_with_supplemental_income: int,
+    me_supplemental_income: float,
+    me_years_with_supplemental_income: int,
     social_security_money: float,
     years_without_social_security: int,
     n_years: int,
 ) -> list[str]:
     """Return lines describing net portfolio withdrawals by retirement period."""
     boundaries: set[int] = {1, n_years + 1}
-    if supplemental_income > 0 and years_with_supplemental_income < n_years:
-        boundaries.add(years_with_supplemental_income + 1)
+    if wife_supplemental_income > 0 and wife_years_with_supplemental_income < n_years:
+        boundaries.add(wife_years_with_supplemental_income + 1)
+    if me_supplemental_income > 0 and me_years_with_supplemental_income < n_years:
+        boundaries.add(me_years_with_supplemental_income + 1)
     if social_security_money > 0 and years_without_social_security < n_years:
         boundaries.add(years_without_social_security + 1)
 
@@ -463,14 +467,24 @@ def format_withdrawal_breakdown(
         if yr_start > n_years:
             break
 
-        has_supp = supplemental_income > 0 and yr_start <= years_with_supplemental_income
+        has_wife_supp = (
+            wife_supplemental_income > 0
+            and yr_start <= wife_years_with_supplemental_income
+        )
+        has_me_supp = (
+            me_supplemental_income > 0
+            and yr_start <= me_years_with_supplemental_income
+        )
         has_ss = social_security_money > 0 and yr_start > years_without_social_security
 
         income_parts: list[str] = []
         total_income = 0.0
-        if has_supp:
-            income_parts.append(f"${supplemental_income:,.0f} supplemental")
-            total_income += supplemental_income
+        if has_wife_supp:
+            income_parts.append(f"${wife_supplemental_income:,.0f} wife supplemental")
+            total_income += wife_supplemental_income
+        if has_me_supp:
+            income_parts.append(f"${me_supplemental_income:,.0f} me supplemental")
+            total_income += me_supplemental_income
         if has_ss:
             income_parts.append(f"${social_security_money:,.0f} SS")
             total_income += social_security_money
@@ -515,8 +529,10 @@ _BOND_RETURN_MODE: BondReturnMode
 _INFLATION_RATE: float 
 _YEARS_WITHOUT_SOCIAL_SECURITY: int 
 _SOCIAL_SECURITY_MONEY: float
-_YEARS_WITH_SUPPLEMENTAL_INCOME: int
-_SUPPLEMENTAL_INCOME: float
+_WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME: int
+_WIFE_SUPPLEMENTAL_INCOME: float
+_ME_YEARS_WITH_SUPPLEMENTAL_INCOME: int
+_ME_SUPPLEMENTAL_INCOME: float
 _HEDGING_CONFIG: HedgingConfig
 _HEDGE_PERIODS_PER_YEAR: int
 
@@ -536,14 +552,18 @@ def _init_worker(
     inflation_rate: float,
     years_without_social_security: int,
     social_security_money: float,
-    years_with_supplemental_income: int,
-    supplemental_income: float,
+    wife_years_with_supplemental_income: int,
+    wife_supplemental_income: float,
+    me_years_with_supplemental_income: int,
+    me_supplemental_income: float,
     hedging_config: HedgingConfig,
 ):
     global _RETURNS, _BOND_RETURNS, _N_YEARS, _INITIAL_BALANCE, _WITHDRAWAL, _WITHDRAWAL_NEGATIVE_YEAR, _GO_BACK_YEARS, \
         _SAMPLING_MODE, _BLOCK_BOOTSTRAP_SIZE, _SP500_PERCENTAGE, _BOND_RATE, _BOND_RETURN_MODE, _INFLATION_RATE, \
         _YEARS_WITHOUT_SOCIAL_SECURITY, _SOCIAL_SECURITY_MONEY, \
-        _YEARS_WITH_SUPPLEMENTAL_INCOME, _SUPPLEMENTAL_INCOME, _HEDGING_CONFIG, _HEDGE_PERIODS_PER_YEAR
+        _WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME, _WIFE_SUPPLEMENTAL_INCOME, \
+        _ME_YEARS_WITH_SUPPLEMENTAL_INCOME, _ME_SUPPLEMENTAL_INCOME, \
+        _HEDGING_CONFIG, _HEDGE_PERIODS_PER_YEAR
     _RETURNS = returns
     _BOND_RETURNS = bond_returns
     _N_YEARS = n_years
@@ -559,8 +579,10 @@ def _init_worker(
     _INFLATION_RATE = inflation_rate
     _YEARS_WITHOUT_SOCIAL_SECURITY = years_without_social_security
     _SOCIAL_SECURITY_MONEY = social_security_money
-    _YEARS_WITH_SUPPLEMENTAL_INCOME = years_with_supplemental_income    
-    _SUPPLEMENTAL_INCOME = supplemental_income
+    _WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME = wife_years_with_supplemental_income
+    _WIFE_SUPPLEMENTAL_INCOME = wife_supplemental_income
+    _ME_YEARS_WITH_SUPPLEMENTAL_INCOME = me_years_with_supplemental_income
+    _ME_SUPPLEMENTAL_INCOME = me_supplemental_income
     _HEDGING_CONFIG = hedging_config
     _HEDGE_PERIODS_PER_YEAR = periods_per_year_from_frequency(
         hedging_config.rebalance_frequency
@@ -628,11 +650,20 @@ def _simulate_chunk(args):
         if years_with_ss > 0:
             social_security_per_year[-years_with_ss:] = _SOCIAL_SECURITY_MONEY * inflation_factors[-years_with_ss:]  # Adjust for inflation
 
-    # Add supplemental income if applicable which is reduced from the withdrawal
+    # Add supplemental income if applicable which is reduced from the withdrawal.
+    # Wife and me are tracked independently so each can have a different
+    # duration and amount.
     supplemental_income_per_year = np.zeros(_N_YEARS, dtype=np.float64)
-    if _SUPPLEMENTAL_INCOME > 0:
-        years_with_supplemental = min(_YEARS_WITH_SUPPLEMENTAL_INCOME, _N_YEARS)
-        supplemental_income_per_year[:years_with_supplemental] = _SUPPLEMENTAL_INCOME * inflation_factors[:years_with_supplemental]  # Adjust for inflation
+    if _WIFE_SUPPLEMENTAL_INCOME > 0:
+        wife_years = min(_WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME, _N_YEARS)
+        supplemental_income_per_year[:wife_years] += (
+            _WIFE_SUPPLEMENTAL_INCOME * inflation_factors[:wife_years]
+        )
+    if _ME_SUPPLEMENTAL_INCOME > 0:
+        me_years = min(_ME_YEARS_WITH_SUPPLEMENTAL_INCOME, _N_YEARS)
+        supplemental_income_per_year[:me_years] += (
+            _ME_SUPPLEMENTAL_INCOME * inflation_factors[:me_years]
+        )
 
     # Vectorized simulation over years
     prev_portfolio_return: Optional[np.ndarray] = None
@@ -718,8 +749,10 @@ def run_simulation_mp(
     inflation_rate: float = 0.03,
     years_without_social_security: int = 35,
     social_security_money: float = 0,
-    years_with_supplemental_income: int = 0,
-    supplemental_income: float = 0,
+    wife_years_with_supplemental_income: int = 0,
+    wife_supplemental_income: float = 0,
+    me_years_with_supplemental_income: int = 0,
+    me_supplemental_income: float = 0,
     random_seed: Optional[int] = None,
     hedging_config: Optional[HedgingConfig] = None,
     returns_override: Optional[np.ndarray] = None,
@@ -729,8 +762,9 @@ def run_simulation_mp(
     Run Monte Carlo retirement portfolio simulations using multiprocessing.
 
     UNITS: Everything is in NOMINAL (today-forward) dollars.
-    - `withdrawal`, `social_security_money`, `supplemental_income`, and
-      `initial_balance` are entered as TODAY's dollars.
+    - `withdrawal`, `social_security_money`, `wife_supplemental_income`,
+      `me_supplemental_income`, and `initial_balance` are entered as TODAY's
+      dollars.
     - Withdrawals, SS, and supplemental income all grow with `inflation_rate`.
     - Stock returns are NOMINAL (reconstructed from Shiller Real TR × CPI).
     - `bond_rate` is NOMINAL.
@@ -754,7 +788,15 @@ def run_simulation_mp(
        using compound inflation: amount * (1 + inflation_rate)^year
 
     5. Income sources reduce portfolio withdrawals (not added to balance)
-       Net withdrawal = max(0, withdrawal - social_security - supplemental_income)
+       Net withdrawal = max(
+           0,
+           withdrawal
+           - social_security
+           - wife_supplemental_income
+           - me_supplemental_income,
+       )
+       Wife and me supplemental income are tracked independently so each can
+       have a different duration and amount.
 
     5b. Negative-year withdrawal switching uses PRIOR-YEAR realized portfolio
         return sign (year 1 defaults to regular withdrawal), avoiding look-ahead.
@@ -795,8 +837,10 @@ def run_simulation_mp(
         inflation_rate: Annual inflation rate (e.g., 0.03 for 3%)
         years_without_social_security: Years until social security starts
         social_security_money: Annual social security income ($, before inflation)
-        years_with_supplemental_income: Number of years with supplemental income
-        supplemental_income: Annual supplemental income ($, before inflation)
+        wife_years_with_supplemental_income: Years the wife earns supplemental income
+        wife_supplemental_income: Annual wife supplemental income ($, before inflation)
+        me_years_with_supplemental_income: Years I earn supplemental income
+        me_supplemental_income: Annual me supplemental income ($, before inflation)
         random_seed: Optional seed for reproducibility (None = random)
         hedging_config: Optional hedge return-shaping config. This is an approximation,
             not executable options pricing or options contract simulation.
@@ -885,12 +929,24 @@ def run_simulation_mp(
         raise ValueError(
             f"social_security_money cannot be negative, got {social_security_money}"
         )
-    if years_with_supplemental_income < 0:
+    if wife_years_with_supplemental_income < 0:
         raise ValueError(
-            f"years_with_supplemental_income cannot be negative, got {years_with_supplemental_income}"
+            "wife_years_with_supplemental_income cannot be negative, "
+            f"got {wife_years_with_supplemental_income}"
         )
-    if supplemental_income < 0:
-        raise ValueError(f"supplemental_income cannot be negative, got {supplemental_income}")
+    if wife_supplemental_income < 0:
+        raise ValueError(
+            f"wife_supplemental_income cannot be negative, got {wife_supplemental_income}"
+        )
+    if me_years_with_supplemental_income < 0:
+        raise ValueError(
+            "me_years_with_supplemental_income cannot be negative, "
+            f"got {me_years_with_supplemental_income}"
+        )
+    if me_supplemental_income < 0:
+        raise ValueError(
+            f"me_supplemental_income cannot be negative, got {me_supplemental_income}"
+        )
 
     if hedging_config is None:
         hedging_config = HedgingConfig(
@@ -961,8 +1017,10 @@ def run_simulation_mp(
             inflation_rate,
             years_without_social_security,
             social_security_money,
-            years_with_supplemental_income,
-            supplemental_income,
+            wife_years_with_supplemental_income,
+            wife_supplemental_income,
+            me_years_with_supplemental_income,
+            me_supplemental_income,
             hedging_config,
         ),
     ) as pool:
@@ -1025,8 +1083,10 @@ def run_simulation_historical_real(
     bond_return_mode: BondReturnMode = "fixed",
     years_without_social_security=45,
     social_security_money=0,
-    years_with_supplemental_income=0,
-    supplemental_income=0,
+    wife_years_with_supplemental_income=0,
+    wife_supplemental_income=0,
+    me_years_with_supplemental_income=0,
+    me_supplemental_income=0,
     hedging_config: Optional[HedgingConfig] = None,
 ):
     """
@@ -1098,11 +1158,19 @@ def run_simulation_historical_real(
         if years_with_ss > 0:
             social_security_per_year[-years_with_ss:] = social_security_money * inflation_factors[-years_with_ss:]
 
-    # Add supplemental income if applicable
+    # Add supplemental income if applicable. Wife and me are tracked
+    # independently so each can have a different duration and amount.
     supplemental_income_per_year = np.zeros(n_years, dtype=np.float64)
-    if supplemental_income > 0:
-        years_with_supplemental = min(years_with_supplemental_income, n_years)
-        supplemental_income_per_year[:years_with_supplemental] = supplemental_income * inflation_factors[:years_with_supplemental]
+    if wife_supplemental_income > 0:
+        wife_years = min(wife_years_with_supplemental_income, n_years)
+        supplemental_income_per_year[:wife_years] += (
+            wife_supplemental_income * inflation_factors[:wife_years]
+        )
+    if me_supplemental_income > 0:
+        me_years = min(me_years_with_supplemental_income, n_years)
+        supplemental_income_per_year[:me_years] += (
+            me_supplemental_income * inflation_factors[:me_years]
+        )
 
     # --- Run each simulation sequentially ---
     for i, start in enumerate(start_indices):

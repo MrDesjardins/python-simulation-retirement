@@ -33,8 +33,10 @@ SIMULATION_RANDOM_SEED: int | None = None
 
 YEARS_WITHOUT_SOCIAL_SECURITY = 18
 SOCIAL_SECURITY_MONEY = 35_000
-YEARS_WITH_SUPPLEMENTAL_INCOME = 10
-SUPPLEMENTAL_INCOME = 18_000
+WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME = 10
+WIFE_SUPPLEMENTAL_INCOME = 18_000
+ME_YEARS_WITH_SUPPLEMENTAL_INCOME = 0  # Set to 0 by default; adjust as needed
+ME_SUPPLEMENTAL_INCOME = 0  # Set to 0 by default; adjust as needed
 
 SIMULATION_FREQUENCY: Literal["monthly", "yearly"] = "yearly"
 TRADING_DAYS_PER_YEAR = 252
@@ -444,10 +446,15 @@ def _social_security_by_year(n_years: int) -> np.ndarray:
 def _supplemental_by_year(n_years: int) -> np.ndarray:
     inflation_factors = (1.0 + INFLATION_RATE) ** np.arange(n_years)
     supp = np.zeros(n_years, dtype=np.float64)
-    if SUPPLEMENTAL_INCOME > 0:
-        years_with_supplemental = min(YEARS_WITH_SUPPLEMENTAL_INCOME, n_years)
-        supp[:years_with_supplemental] = (
-            SUPPLEMENTAL_INCOME * inflation_factors[:years_with_supplemental]
+    if WIFE_SUPPLEMENTAL_INCOME > 0:
+        wife_years = min(WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME, n_years)
+        supp[:wife_years] += (
+            WIFE_SUPPLEMENTAL_INCOME * inflation_factors[:wife_years]
+        )
+    if ME_SUPPLEMENTAL_INCOME > 0:
+        me_years = min(ME_YEARS_WITH_SUPPLEMENTAL_INCOME, n_years)
+        supp[:me_years] += (
+            ME_SUPPLEMENTAL_INCOME * inflation_factors[:me_years]
         )
     return supp
 

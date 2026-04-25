@@ -170,26 +170,71 @@ def test_simulation_with_social_security():
     assert result.probability_of_success >= result_no_ss.probability_of_success
 
 
-def test_simulation_with_supplemental_income():
-    """Test that supplemental income is correctly applied."""
+def test_simulation_with_wife_supplemental_income():
+    """Test that wife supplemental income is correctly applied."""
     params = {
         "n_sims": 100,
         "n_years": 30,
         "initial_balance": 1_000_000,
         "withdrawal": 50_000,
         "withdrawal_negative_year": 50_000,
-        "years_with_supplemental_income": 10,  # Extra income for first 10 years
-        "supplemental_income": 20_000,  # $20k/year
+        "wife_years_with_supplemental_income": 10,  # Extra income for first 10 years
+        "wife_supplemental_income": 20_000,  # $20k/year
         "random_seed": 42,
     }
 
     result = run_simulation_mp(**params)
 
-    # With supplemental income, should have better outcomes
-    result_no_supp = run_simulation_mp(**{**params, "supplemental_income": 0})
+    result_no_supp = run_simulation_mp(**{**params, "wife_supplemental_income": 0})
 
-    # Probability of success should be higher with supplemental income
     assert result.probability_of_success >= result_no_supp.probability_of_success
+
+
+def test_simulation_with_me_supplemental_income():
+    """Test that me supplemental income is correctly applied."""
+    params = {
+        "n_sims": 100,
+        "n_years": 30,
+        "initial_balance": 1_000_000,
+        "withdrawal": 50_000,
+        "withdrawal_negative_year": 50_000,
+        "me_years_with_supplemental_income": 10,  # Extra income for first 10 years
+        "me_supplemental_income": 20_000,  # $20k/year
+        "random_seed": 42,
+    }
+
+    result = run_simulation_mp(**params)
+
+    result_no_supp = run_simulation_mp(**{**params, "me_supplemental_income": 0})
+
+    assert result.probability_of_success >= result_no_supp.probability_of_success
+
+
+def test_wife_and_me_supplemental_income_stack():
+    """Wife and me supplemental incomes should stack and reduce the portfolio draw."""
+    base = {
+        "n_sims": 200,
+        "n_years": 20,
+        "initial_balance": 500_000,
+        "withdrawal": 60_000,
+        "withdrawal_negative_year": 60_000,
+        "random_seed": 7,
+    }
+
+    only_wife = run_simulation_mp(
+        **base,
+        wife_supplemental_income=10_000,
+        wife_years_with_supplemental_income=10,
+    )
+    both = run_simulation_mp(
+        **base,
+        wife_supplemental_income=10_000,
+        wife_years_with_supplemental_income=10,
+        me_supplemental_income=10_000,
+        me_years_with_supplemental_income=10,
+    )
+
+    assert both.probability_of_success >= only_wife.probability_of_success
 
 
 def test_withdrawal_switch_uses_prior_year_portfolio_return():

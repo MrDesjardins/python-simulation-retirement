@@ -38,35 +38,39 @@ def _env_flag(name: str, default: bool) -> bool:
 def main() -> None:
     # Keep this configurable: override with N_SIMS=... when needed.
     # Example: N_SIMS=5000000 uv run 01_success.py
-    n_sims = _env_int("N_SIMS", 2_000_000)
-    cap = _env_int("HIST_CAP", 160_000_000)
+    n_sims = _env_int("N_SIMS", 6_000_000)
+    cap = _env_int("HIST_CAP", 100_000_000)
     bin_width = _env_int("HIST_BIN_WIDTH", 1_000_000)
     show_plot = _env_flag("SHOW_PLOT", True)
-    withdrawal = 120_000  # 120k is 96k after taxes
-    withdrawal_negative_year = 100_000  # 100k is 80k after taxes
+    withdrawal = 110_000  # 120k is 96k after taxes
+    withdrawal_negative_year = 95_000  # 100k is 80k after taxes
     social_security_money = 48_000
     years_without_social_security = 25
-    years_with_supplemental_income = 12
-    supplemental_income = 30_000
+    wife_years_with_supplemental_income = 14
+    wife_supplemental_income = 24_000
+    me_years_with_supplemental_income = 2
+    me_supplemental_income = 80_000
 
     start_time = time.perf_counter()
     simulation_data = run_simulation_mp(
-        n_years=40,
+        n_years=45,
         return_trajectories=False,
         n_sims=n_sims,
-        initial_balance=4_300_000, # Does not containt the 500k for house down payment
+        initial_balance=4_000_000,  # Does not containt the 500k for house down payment
         sampling_mode=SAMPLING_MODE,
         withdrawal=withdrawal,
         withdrawal_negative_year=withdrawal_negative_year,
         random_with_real_life_constraints=False,
-        sp500_percentage=0.75,
-        bond_rate=0.03,  # Only if bond_return_mode is "fixed"
+        sp500_percentage=0.70,
+        bond_rate=0.03,  # Only if bond_return_mode is "fixed" (see below)
         bond_return_mode="historical",
         inflation_rate=0.03,
         social_security_money=social_security_money,
         years_without_social_security=years_without_social_security,
-        years_with_supplemental_income=years_with_supplemental_income,
-        supplemental_income=supplemental_income,
+        wife_years_with_supplemental_income=wife_years_with_supplemental_income,
+        wife_supplemental_income=wife_supplemental_income,
+        me_years_with_supplemental_income=me_years_with_supplemental_income,
+        me_supplemental_income=me_supplemental_income,
     )
     end_time = time.perf_counter()
     print(
@@ -82,8 +86,10 @@ def main() -> None:
     for line in format_withdrawal_breakdown(
         withdrawal=withdrawal,
         withdrawal_negative_year=withdrawal_negative_year,
-        supplemental_income=supplemental_income,
-        years_with_supplemental_income=years_with_supplemental_income,
+        wife_supplemental_income=wife_supplemental_income,
+        wife_years_with_supplemental_income=wife_years_with_supplemental_income,
+        me_supplemental_income=me_supplemental_income,
+        me_years_with_supplemental_income=me_years_with_supplemental_income,
         social_security_money=social_security_money,
         years_without_social_security=years_without_social_security,
         n_years=40,
@@ -123,13 +129,10 @@ def main() -> None:
     jump = 4
     tick_positions = list(bins[::jump])
     tick_positions = [-bin_width / 2] + tick_positions
-    tick_labels = (
-        ["<= $0"]
-        + [
-            f"${int(x / 1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}"
-            for x in bins[::jump]
-        ]
-    )
+    tick_labels = ["<= $0"] + [
+        f"${int(x / 1_000_000)}M" if x >= 1_000_000 else f"${x:,.0f}"
+        for x in bins[::jump]
+    ]
     plt.xticks(tick_positions, tick_labels, rotation=30, ha="right", fontsize=10)
 
     plt.yscale("log")

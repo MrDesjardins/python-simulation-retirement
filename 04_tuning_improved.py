@@ -48,8 +48,10 @@ BOND_RATE = 0.036  # Nominal; earns 0% real at equal inflation — conservative
 YEARS_WITHOUT_SOCIAL_SECURITY = 18 # Social security starts at 62, median retirement age is 65, so assume 20 years without social security for conservative planning
 SOCIAL_SECURITY_MONEY = 40_000  # per year
 
-YEARS_WITH_SUPPLEMENTAL_INCOME = 12  # Spouse working
-SUPPLEMENTAL_INCOME = 24_000  # per year
+WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME = 12  # Spouse working
+WIFE_SUPPLEMENTAL_INCOME = 24_000  # per year
+ME_YEARS_WITH_SUPPLEMENTAL_INCOME = 0  # Set to 0 by default; adjust as needed
+ME_SUPPLEMENTAL_INCOME = 0  # per year; set to 0 by default; adjust as needed
 
 # Random seed configuration
 # Set to None for production (explore different market scenarios each trial)
@@ -153,8 +155,10 @@ def objective(trial):
             inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
-            supplemental_income=SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
             random_seed=OPTIMIZATION_RANDOM_SEED,  # None = different futures per trial
         )
 
@@ -348,12 +352,21 @@ if __name__ == "__main__":
             f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
         )
         print(f"  Social Security starts after {YEARS_WITHOUT_SOCIAL_SECURITY} years, amount: ${SOCIAL_SECURITY_MONEY:,} per year")
-        print(f"  Supplemental Income for {YEARS_WITH_SUPPLEMENTAL_INCOME} years, amount: ${SUPPLEMENTAL_INCOME:,} per year")
+        print(
+            f"  Wife Supplemental Income for {WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME} "
+            f"years, amount: ${WIFE_SUPPLEMENTAL_INCOME:,} per year"
+        )
+        print(
+            f"  Me Supplemental Income for {ME_YEARS_WITH_SUPPLEMENTAL_INCOME} "
+            f"years, amount: ${ME_SUPPLEMENTAL_INCOME:,} per year"
+        )
         for line in format_withdrawal_breakdown(
             withdrawal=best_params["withdrawal"],
             withdrawal_negative_year=withdrawal_negative_year,
-            supplemental_income=SUPPLEMENTAL_INCOME,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
             social_security_money=SOCIAL_SECURITY_MONEY,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             n_years=RETIREMENT_YEARS,
@@ -394,8 +407,10 @@ if __name__ == "__main__":
             inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
-            supplemental_income=SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
             random_seed=OPTIMIZATION_RANDOM_SEED,
         )
         print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
@@ -444,8 +459,10 @@ if __name__ == "__main__":
         "BOND_RATE": BOND_RATE,
         "YEARS_WITHOUT_SOCIAL_SECURITY": YEARS_WITHOUT_SOCIAL_SECURITY,
         "SOCIAL_SECURITY_MONEY": SOCIAL_SECURITY_MONEY,
-        "YEARS_WITH_SUPPLEMENTAL_INCOME": YEARS_WITH_SUPPLEMENTAL_INCOME,
-        "SUPPLEMENTAL_INCOME": SUPPLEMENTAL_INCOME,
+        "WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME": WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+        "WIFE_SUPPLEMENTAL_INCOME": WIFE_SUPPLEMENTAL_INCOME,
+        "ME_YEARS_WITH_SUPPLEMENTAL_INCOME": ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+        "ME_SUPPLEMENTAL_INCOME": ME_SUPPLEMENTAL_INCOME,
         "OPTIMIZATION_RANDOM_SEED": OPTIMIZATION_RANDOM_SEED,
         "OBJECTIVE_WEIGHTS": dict(OBJECTIVE_WEIGHTS),
         "PROB_THRESHOLD_MIN": PROB_THRESHOLD_MIN,

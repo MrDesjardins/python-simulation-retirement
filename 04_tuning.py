@@ -43,8 +43,10 @@ BOND_RATE = 0.036  # Nominal; earns 0% real at equal inflation — conservative
 YEARS_WITHOUT_SOCIAL_SECURITY = 20
 SOCIAL_SECURITY_MONEY = 50_000  # per year
 
-YEARS_WITH_SUPPLEMENTAL_INCOME = 12 # Spouse working
-SUPPLEMENTAL_INCOME = 30_000  # per year
+WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME = 12  # Spouse working
+WIFE_SUPPLEMENTAL_INCOME = 30_000  # per year
+ME_YEARS_WITH_SUPPLEMENTAL_INCOME = 0  # Set to 0 by default; adjust as needed
+ME_SUPPLEMENTAL_INCOME = 0  # per year; set to 0 by default; adjust as needed
 
 def objective(trial):
     # Suggest both initial balance and withdrawal amount
@@ -93,8 +95,10 @@ def objective(trial):
             inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
-            supplemental_income=SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
         )
 
         std_error = simulation_data.std_error
@@ -231,12 +235,21 @@ if __name__ == "__main__":
             f"  SP500: {best_params['sp500_percentage']:.2%}, Bond rate: {BOND_RATE:.2%}, Inflation rate: {INFLATION_RATE:.2%}"
         )
         print(f"  Social Security starts after {YEARS_WITHOUT_SOCIAL_SECURITY} years, amount: ${SOCIAL_SECURITY_MONEY:,} per year")
-        print(f"  Supplemental Income for {YEARS_WITH_SUPPLEMENTAL_INCOME} years, amount: ${SUPPLEMENTAL_INCOME:,} per year")
+        print(
+            f"  Wife Supplemental Income for {WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME} "
+            f"years, amount: ${WIFE_SUPPLEMENTAL_INCOME:,} per year"
+        )
+        print(
+            f"  Me Supplemental Income for {ME_YEARS_WITH_SUPPLEMENTAL_INCOME} "
+            f"years, amount: ${ME_SUPPLEMENTAL_INCOME:,} per year"
+        )
         for line in format_withdrawal_breakdown(
             withdrawal=best_params["withdrawal"],
             withdrawal_negative_year=best_params["withdrawal_negative_year"],
-            supplemental_income=SUPPLEMENTAL_INCOME,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
             social_security_money=SOCIAL_SECURITY_MONEY,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             n_years=RETIREMENT_YEARS,
@@ -290,8 +303,10 @@ if __name__ == "__main__":
             inflation_rate=INFLATION_RATE,
             years_without_social_security=YEARS_WITHOUT_SOCIAL_SECURITY,
             social_security_money=SOCIAL_SECURITY_MONEY,
-            years_with_supplemental_income=YEARS_WITH_SUPPLEMENTAL_INCOME,
-            supplemental_income=SUPPLEMENTAL_INCOME,
+            wife_years_with_supplemental_income=WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            wife_supplemental_income=WIFE_SUPPLEMENTAL_INCOME,
+            me_years_with_supplemental_income=ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+            me_supplemental_income=ME_SUPPLEMENTAL_INCOME,
         )
         print(f"Final Probability of Success: {final_data.probability_of_success:.3%}")
         print(f"Standard Deviation: ${final_data.std_final:,.0f}")
@@ -336,8 +351,10 @@ if __name__ == "__main__":
         "BOND_RATE": BOND_RATE,
         "YEARS_WITHOUT_SOCIAL_SECURITY": YEARS_WITHOUT_SOCIAL_SECURITY,
         "SOCIAL_SECURITY_MONEY": SOCIAL_SECURITY_MONEY,
-        "YEARS_WITH_SUPPLEMENTAL_INCOME": YEARS_WITH_SUPPLEMENTAL_INCOME,
-        "SUPPLEMENTAL_INCOME": SUPPLEMENTAL_INCOME,
+        "WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME": WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME,
+        "WIFE_SUPPLEMENTAL_INCOME": WIFE_SUPPLEMENTAL_INCOME,
+        "ME_YEARS_WITH_SUPPLEMENTAL_INCOME": ME_YEARS_WITH_SUPPLEMENTAL_INCOME,
+        "ME_SUPPLEMENTAL_INCOME": ME_SUPPLEMENTAL_INCOME,
         "OBJECTIVE_WEIGHTS": {
             "prob_success": 0.50,
             "withdrawal": 0.15,
