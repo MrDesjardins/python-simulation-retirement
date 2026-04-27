@@ -879,28 +879,28 @@ def _simulate_chunk(args):
 
 
 def run_simulation_mp(
+    *,
+    n_years: int,
+    initial_balance: float,
+    withdrawal: float,
+    withdrawal_negative_year: float,
+    sampling_mode: SamplingMode,
+    block_bootstrap_size: int,
+    sp500_percentage: float,
+    bond_rate: float,
+    bond_return_mode: BondReturnMode,
+    inflation_rate: float,
+    years_without_social_security: int,
+    social_security_money: float,
+    wife_years_with_supplemental_income: int,
+    wife_supplemental_income: float,
+    me_years_with_supplemental_income: int,
+    me_supplemental_income: float,
     n_sims: int = 100_000,
-    n_years: int = 35,
-    initial_balance: float = 6_000_000,
-    withdrawal: float = 100_000,
-    withdrawal_negative_year: float = 100_000,
     go_back_year: int = 0,
     n_workers: Optional[int] = None,
-    return_trajectories: bool=False,
+    return_trajectories: bool = False,
     chunk_size: Optional[int] = None,
-    random_with_real_life_constraints: bool = False,
-    sampling_mode: Optional[str] = None,
-    block_bootstrap_size: int = 5,
-    sp500_percentage: float = 1.0,
-    bond_rate: float = 0.04,
-    bond_return_mode: BondReturnMode = "fixed",
-    inflation_rate: float = 0.03,
-    years_without_social_security: int = 35,
-    social_security_money: float = 0,
-    wife_years_with_supplemental_income: int = 0,
-    wife_supplemental_income: float = 0,
-    me_years_with_supplemental_income: int = 0,
-    me_supplemental_income: float = 0,
     random_seed: Optional[int] = None,
     hedging_config: Optional[HedgingConfig] = None,
     returns_override: Optional[np.ndarray] = None,
@@ -952,7 +952,7 @@ def run_simulation_mp(
         return sign (year 1 defaults to regular withdrawal), avoiding look-ahead.
 
     6. Sampling modes (sampling_mode parameter):
-       - "block_bootstrap" (DEFAULT, recommended): Samples consecutive blocks of
+       - "block_bootstrap" (recommended): Samples consecutive blocks of
          `block_bootstrap_size` historical years (with replacement, circular).
          Preserves multi-year crash sequences (1929-32, 1973-74, 2000-02,
          2007-09) that drive sequence-of-returns risk in real retirements.
@@ -960,9 +960,6 @@ def run_simulation_mp(
          autocorrelation; tends to under-state sequence risk.
        - "constrained": Bounds consecutive negative/positive years and
          cumulative changes to avoid pathological streaks.
-
-       Backwards-compat: `random_with_real_life_constraints=True` is mapped
-       to "constrained" if `sampling_mode` is not explicitly set.
 
     Parameters:
         n_sims: Number of simulation runs
@@ -974,16 +971,13 @@ def run_simulation_mp(
         n_workers: Number of worker processes (default: cpu_count - 1)
         return_trajectories: If True, return full year-by-year trajectories
         chunk_size: Simulations per worker chunk (default: auto-calculated)
-        random_with_real_life_constraints: Legacy flag. If sampling_mode is
-            None, True maps to "constrained" and False to "block_bootstrap".
         sampling_mode: One of {"block_bootstrap", "random", "constrained"}.
-            If None (default), derived from random_with_real_life_constraints.
         block_bootstrap_size: Block length (years) when sampling_mode is
-            "block_bootstrap". Default 5.
+            "block_bootstrap".
         sp500_percentage: Fraction of portfolio in stocks (0.0 to 1.0)
         bond_rate: Annual bond return rate (e.g., 0.04 for 4%) when
             bond_return_mode="fixed".
-        bond_return_mode: "fixed" (default) or "historical".
+        bond_return_mode: "fixed" or "historical".
         inflation_rate: Annual inflation rate (e.g., 0.03 for 3%)
         years_without_social_security: Years until social security starts
         social_security_money: Annual social security income ($, before inflation)
@@ -1126,12 +1120,6 @@ def run_simulation_mp(
             rebalance_frequency="yearly",
         )
 
-    # Resolve sampling mode. Block bootstrap is the new default because it
-    # preserves multi-year crash regimes (sequence-of-returns risk).
-    if sampling_mode is None:
-        sampling_mode = (
-            "constrained" if random_with_real_life_constraints else "block_bootstrap"
-        )
     if sampling_mode not in ("random", "constrained", "block_bootstrap"):
         raise ValueError(
             f"sampling_mode must be one of 'random', 'constrained', "
@@ -1219,11 +1207,6 @@ def run_simulation_mp(
         trajectories = trajectories[:n_sims]
 
     # end_time = time.time()
-    # mode = (
-    #     "constrained random"
-    #     if random_with_real_life_constraints
-    #     else "unconstrained random"
-    # )
     # print(
     #     f"Simulation of {n_sims:,} runs over {n_years} years took {end_time - start_time:.2f} seconds using {mode}."
     # )
@@ -1252,22 +1235,23 @@ def run_simulation_mp(
 
 
 def run_simulation_historical_real(
-    n_years=45,
-    initial_balance=4_800_000,
-    withdrawal=120_000,
-    withdrawal_negative_year=80_000,
-    go_back_year=0,
-    return_trajectories=False,
-    inflation_rate=0.03,
-    sp500_percentage=1.0,
-    bond_rate=0.04,
-    bond_return_mode: BondReturnMode = "fixed",
-    years_without_social_security=45,
-    social_security_money=0,
-    wife_years_with_supplemental_income=0,
-    wife_supplemental_income=0,
-    me_years_with_supplemental_income=0,
-    me_supplemental_income=0,
+    *,
+    n_years: int,
+    initial_balance: float,
+    withdrawal: float,
+    withdrawal_negative_year: float,
+    inflation_rate: float,
+    sp500_percentage: float,
+    bond_rate: float,
+    bond_return_mode: BondReturnMode,
+    years_without_social_security: int,
+    social_security_money: float,
+    wife_years_with_supplemental_income: int,
+    wife_supplemental_income: float,
+    me_years_with_supplemental_income: int,
+    me_supplemental_income: float,
+    go_back_year: int = 0,
+    return_trajectories: bool = False,
     hedging_config: Optional[HedgingConfig] = None,
     annual_expense_ratio: float = 0.0,
     reserve_floor: Optional[float] = None,

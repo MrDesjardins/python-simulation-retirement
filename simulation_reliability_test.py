@@ -20,6 +20,29 @@ from simulation_convergence import (
 )
 
 
+def _base_simulation_mp_kwargs(**overrides):
+    params = {
+        "n_years": 30,
+        "initial_balance": 1_000_000,
+        "withdrawal": 50_000,
+        "withdrawal_negative_year": 50_000,
+        "sampling_mode": "block_bootstrap",
+        "block_bootstrap_size": 5,
+        "sp500_percentage": 0.7,
+        "bond_rate": 0.04,
+        "bond_return_mode": "fixed",
+        "inflation_rate": 0.03,
+        "years_without_social_security": 30,
+        "social_security_money": 0,
+        "wife_years_with_supplemental_income": 0,
+        "wife_supplemental_income": 0,
+        "me_years_with_supplemental_income": 0,
+        "me_supplemental_income": 0,
+    }
+    params.update(overrides)
+    return params
+
+
 def test_wilson_score_interval_bounds() -> None:
     lo, hi = wilson_score_interval(50, 100, z=1.96)
     assert 0.0 <= lo <= hi <= 1.0
@@ -80,13 +103,15 @@ def test_simulation_data_reserve_floor() -> None:
 def test_go_back_year_emits_warning() -> None:
     with pytest.warns(UserWarning, match="go_back_year"):
         run_simulation_mp(
-            n_sims=200,
-            n_years=15,
-            initial_balance=2_000_000,
-            withdrawal=400_000,
-            withdrawal_negative_year=400_000,
-            go_back_year=3,
-            random_seed=1,
+            **_base_simulation_mp_kwargs(
+                n_sims=200,
+                n_years=15,
+                initial_balance=2_000_000,
+                withdrawal=400_000,
+                withdrawal_negative_year=400_000,
+                go_back_year=3,
+                random_seed=1,
+            )
         )
 
 
@@ -96,21 +121,25 @@ def test_go_back_year_emits_warning() -> None:
 )
 def test_annual_expense_ratio_reduces_returns() -> None:
     base = run_simulation_mp(
-        n_sims=2_000,
-        n_years=25,
-        initial_balance=2_000_000,
-        withdrawal=80_000,
-        withdrawal_negative_year=80_000,
-        random_seed=7,
-        annual_expense_ratio=0.0,
+        **_base_simulation_mp_kwargs(
+            n_sims=2_000,
+            n_years=25,
+            initial_balance=2_000_000,
+            withdrawal=80_000,
+            withdrawal_negative_year=80_000,
+            random_seed=7,
+            annual_expense_ratio=0.0,
+        )
     )
     drag = run_simulation_mp(
-        n_sims=2_000,
-        n_years=25,
-        initial_balance=2_000_000,
-        withdrawal=80_000,
-        withdrawal_negative_year=80_000,
-        random_seed=7,
-        annual_expense_ratio=0.01,
+        **_base_simulation_mp_kwargs(
+            n_sims=2_000,
+            n_years=25,
+            initial_balance=2_000_000,
+            withdrawal=80_000,
+            withdrawal_negative_year=80_000,
+            random_seed=7,
+            annual_expense_ratio=0.01,
+        )
     )
     assert drag.final_balances.mean() <= base.final_balances.mean()

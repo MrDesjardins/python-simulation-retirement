@@ -47,10 +47,10 @@ class BaselineSuccessScriptConfig:
     years_without_social_security: int = 25
     wife_years_with_supplemental_income: int = 14
     wife_supplemental_income: float = 24_000
-    me_years_with_supplemental_income: int = 2
-    me_supplemental_income: float = 80_000
+    me_years_with_supplemental_income: int = 0
+    me_supplemental_income: float = 0
     annual_expense_ratio: float = 0.0
-    reserve_floor: Optional[float] = 500_000
+    reserve_floor: Optional[float] = 250_000
 
     def run_simulation_mp_kwargs(self) -> dict[str, Any]:
         return {
@@ -60,7 +60,6 @@ class BaselineSuccessScriptConfig:
             "block_bootstrap_size": self.block_bootstrap_size,
             "withdrawal": self.withdrawal,
             "withdrawal_negative_year": self.withdrawal_negative_year,
-            "random_with_real_life_constraints": False,
             "sp500_percentage": self.sp500_percentage,
             "bond_rate": self.bond_rate,
             "bond_return_mode": self.bond_return_mode,

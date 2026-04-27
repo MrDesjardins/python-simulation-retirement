@@ -17,9 +17,13 @@ result1 = run_simulation_mp(
     initial_balance=1_000_000,
     withdrawal=50_000,
     withdrawal_negative_year=40_000,
+    sampling_mode="block_bootstrap",
+    block_bootstrap_size=5,
     random_seed=42,
     sp500_percentage=0.7,
     bond_rate=0.04,
+    bond_return_mode="fixed",
+    inflation_rate=0.03,
     social_security_money=30_000,
     years_without_social_security=20,
     wife_supplemental_income=20_000,
@@ -38,9 +42,13 @@ result2 = run_simulation_mp(
     initial_balance=1_000_000,
     withdrawal=50_000,
     withdrawal_negative_year=40_000,
+    sampling_mode="block_bootstrap",
+    block_bootstrap_size=5,
     random_seed=42,  # Same seed as Test 1
     sp500_percentage=0.7,
     bond_rate=0.04,
+    bond_return_mode="fixed",
+    inflation_rate=0.03,
     social_security_money=30_000,
     years_without_social_security=20,
     wife_supplemental_income=20_000,
@@ -62,10 +70,16 @@ result3 = run_simulation_historical_real(
     initial_balance=1_000_000,
     withdrawal=50_000,
     withdrawal_negative_year=40_000,
+    inflation_rate=0.03,
     sp500_percentage=0.6,
     bond_rate=0.04,
+    bond_return_mode="fixed",
     social_security_money=30_000,
     years_without_social_security=20,
+    wife_supplemental_income=0,
+    wife_years_with_supplemental_income=0,
+    me_supplemental_income=0,
+    me_years_with_supplemental_income=0,
 )
 print(f"✓ Historical simulations run: {result3.n_sims}")
 print(f"✓ Probability of success: {result3.probability_of_success:.2%}")
@@ -78,7 +92,18 @@ result4 = run_simulation_mp(
     initial_balance=1_000_000,
     withdrawal=50_000,
     withdrawal_negative_year=40_000,
-    random_with_real_life_constraints=True,
+    sampling_mode="constrained",
+    block_bootstrap_size=5,
+    sp500_percentage=0.7,
+    bond_rate=0.04,
+    bond_return_mode="fixed",
+    inflation_rate=0.03,
+    social_security_money=0,
+    years_without_social_security=35,
+    wife_supplemental_income=0,
+    wife_years_with_supplemental_income=0,
+    me_supplemental_income=0,
+    me_years_with_supplemental_income=0,
     random_seed=123,
 )
 print("✓ Constrained sampling completed successfully")
@@ -87,7 +112,25 @@ print(f"✓ Probability of success: {result4.probability_of_success:.2%}")
 # Test 5: Input validation
 print("\n[Test 5] Input validation...")
 try:
-    run_simulation_mp(n_sims=-100)
+    run_simulation_mp(
+        n_sims=-100,
+        n_years=30,
+        initial_balance=1_000_000,
+        withdrawal=50_000,
+        withdrawal_negative_year=40_000,
+        sampling_mode="block_bootstrap",
+        block_bootstrap_size=5,
+        sp500_percentage=0.7,
+        bond_rate=0.04,
+        bond_return_mode="fixed",
+        inflation_rate=0.03,
+        social_security_money=0,
+        years_without_social_security=30,
+        wife_supplemental_income=0,
+        wife_years_with_supplemental_income=0,
+        me_supplemental_income=0,
+        me_years_with_supplemental_income=0,
+    )
     print("✗ FAILED - Should have rejected negative n_sims")
     exit(1)
 except ValueError as e:
