@@ -15,8 +15,10 @@ from common import (
 )
 from simulation_convergence import (
     PROB_SUCCESS_SE_ACCEPTANCE,
+    assess_wilson_95_precision,
     cumulative_success_metrics,
     prob_convergence_should_stop,
+    wilson_95_half_width,
 )
 
 
@@ -47,6 +49,19 @@ def test_wilson_score_interval_bounds() -> None:
     lo, hi = wilson_score_interval(50, 100, z=1.96)
     assert 0.0 <= lo <= hi <= 1.0
     assert lo < 0.55 < hi
+
+
+def test_wilson_95_precision_assessment() -> None:
+    tight = wilson_score_interval(9_971_853, 10_000_000, z=1.96)
+    ok, half, target = assess_wilson_95_precision(tight)
+    assert half == pytest.approx(wilson_95_half_width(tight))
+    assert ok is True
+    assert half < target
+
+    wide = wilson_score_interval(500, 1_000, z=1.96)
+    ok_wide, half_wide, _ = assess_wilson_95_precision(wide)
+    assert ok_wide is False
+    assert half_wide > target
 
 
 def test_binomial_se_at_extremes() -> None:

@@ -16,7 +16,7 @@ SamplingMode = Literal["random", "constrained", "block_bootstrap"]
 
 
 # --- Optuna studies: one nominal world for 04_* and 05_* ---
-TUNING_RETIREMENT_YEARS = 40
+TUNING_RETIREMENT_YEARS = 45
 TUNING_INFLATION_RATE = 0.036
 TUNING_BOND_RATE = 0.036
 TUNING_SAMPLING_MODE: SamplingMode = "block_bootstrap"
@@ -34,19 +34,19 @@ class BaselineSuccessScriptConfig:
     """Canonical parameters for `01_success.py` and matching historical checks."""
 
     n_years: int = 45
-    initial_balance: float = 4_000_000
+    initial_balance: float = 4_300_000 # This is the money we need and then think to add more to buy a house (500k more)
     sampling_mode: SamplingMode = "block_bootstrap"
     block_bootstrap_size: int = 5
     sp500_percentage: float = 0.70
     bond_rate: float = 0.03
     bond_return_mode: BondReturnMode = "historical"
     inflation_rate: float = 0.03
-    withdrawal: float = 110_000
-    withdrawal_negative_year: float = 95_000
-    social_security_money: float = 48_000
-    years_without_social_security: int = 25
-    wife_years_with_supplemental_income: int = 14
-    wife_supplemental_income: float = 24_000
+    withdrawal: float = 120_000
+    withdrawal_negative_year: float = 110_000
+    social_security_money: float = 50_000
+    years_without_social_security: int = 20
+    wife_years_with_supplemental_income: int = 12
+    wife_supplemental_income: float = 50_000 # 50k is 4,166$ before tax, after income tax it is about 3,500$ per month
     me_years_with_supplemental_income: int = 0
     me_supplemental_income: float = 0
     annual_expense_ratio: float = 0.0

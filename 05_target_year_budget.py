@@ -28,8 +28,8 @@ from tuning_run_results import (
 # Adaptive convergence uses success-rate SE (simulation_convergence.py).
 
 # Constants
-INITIAL_BALANCE = 4_000_000  # Fixed — this is the known starting capital
-WITHDRAWAL_RANGE = (100_000, 110_000) # Dont forget taxes so the withdrawal is always more than the expected 12 months budget
+INITIAL_BALANCE = 4_300_000  # Fixed — this is the known starting capital
+WITHDRAWAL_RANGE = (110_000, 120_000) # Dont forget taxes so the withdrawal is always more than the expected 12 months budget
 WITHDRAWAL_STEP = 2_000
 WITHDRAWAL_NEGATIVE_YEAR_PERCENTAGE_RANGE = (0.90, 1.0)
 WITHDRAWAL_NEGATIVE_STEP = 0.01
@@ -38,7 +38,7 @@ STEP_N_SIMS = 50_000
 TRIAL_COUNT = 3_000 # Higher trial count is more accurate, but slower (5,000 is for testing, 20,000 is for production)
 STORAGE_PATH = "sqlite:///db_05.sqlite3"  # Separate DB — does not affect study 04
 STUDY_NAME = (
-    "target_budget_study_v21"  # ⚠️ v14: nominal returns, block bootstrap, tighter convergence
+    "target_budget_study_v23"  # ⚠️ v14: nominal returns, block bootstrap, tighter convergence
 )
 RESULTS_JSON_PATH = f"results/{STUDY_NAME}_meta.json"
 SAMPLING_MODE = TUNING_SAMPLING_MODE
@@ -51,10 +51,10 @@ INFLATION_RATE = TUNING_INFLATION_RATE
 BOND_RATE = TUNING_BOND_RATE
 
 YEARS_WITHOUT_SOCIAL_SECURITY = 18 # 62 min age, 66 max 
-SOCIAL_SECURITY_MONEY = 40_000  # per year
+SOCIAL_SECURITY_MONEY = 50_000  # per year
 
 WIFE_YEARS_WITH_SUPPLEMENTAL_INCOME = 12  # Spouse working
-WIFE_SUPPLEMENTAL_INCOME = 24_000  # per year
+WIFE_SUPPLEMENTAL_INCOME = 36_000  # per year
 ME_YEARS_WITH_SUPPLEMENTAL_INCOME = 0  # Set to 0 by default; adjust as needed
 ME_SUPPLEMENTAL_INCOME = 0  # per year; set to 0 by default; adjust as needed
 

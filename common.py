@@ -10,6 +10,7 @@ from random_utils import (
     generate_block_bootstrap_indices,
     generate_constrained_indices,
 )
+from simulation_convergence import PROB_SUCCESS_SE_ACCEPTANCE, assess_wilson_95_precision
 
 SamplingMode = Literal["random", "constrained", "block_bootstrap"]
 BondReturnMode = Literal["fixed", "historical"]
@@ -138,13 +139,32 @@ class SimulationData:
         )
         w95_lo, w95_hi = self.wilson_success_95
         w99_lo, w99_hi = self.wilson_success_99
+        precision_ok, w95_half, w95_target = assess_wilson_95_precision(
+            self.wilson_success_95
+        )
+        w95_half_pp = w95_half * 100.0
+        w95_target_pp = w95_target * 100.0
         print(
-            f"  Wilson 95% interval for P(success): {w95_lo:.2%} – {w95_hi:.2%} "
-            f"(not the same as mean-balance CIs below)"
+            f"  Wilson 95% interval for P(success): {w95_lo:.4%} – {w95_hi:.4%} "
+            f"(±{w95_half_pp:.4f} pp)"
         )
         print(
-            f"  Wilson 99% interval for P(success): {w99_lo:.2%} – {w99_hi:.2%}"
+            f"  Wilson 99% interval for P(success): {w99_lo:.4%} – {w99_hi:.4%}"
         )
+        if precision_ok:
+            print(
+                f"  Wilson precision: OK — 95% half-width ±{w95_half_pp:.4f} pp "
+                f"≤ target ±{w95_target_pp:.4f} pp "
+                f"(SE ≤ {PROB_SUCCESS_SE_ACCEPTANCE:.4%}); "
+                f"n_sims={self.n_sims:,} is sufficient for P(success)"
+            )
+        else:
+            print(
+                f"  Wilson precision: NOT OK — 95% half-width ±{w95_half_pp:.4f} pp "
+                f"> target ±{w95_target_pp:.4f} pp "
+                f"(SE ≤ {PROB_SUCCESS_SE_ACCEPTANCE:.4%}); "
+                f"increase N_SIMS and re-run"
+            )
 
         # Separate the three categories
         underflow = self.final_balances[self.final_balances <= 0]
