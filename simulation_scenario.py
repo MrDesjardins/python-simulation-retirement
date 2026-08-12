@@ -41,12 +41,12 @@ class BaselineSuccessScriptConfig:
     bond_rate: float = 0.03
     bond_return_mode: BondReturnMode = "historical"
     inflation_rate: float = 0.03
-    withdrawal: float = 120_000
-    withdrawal_negative_year: float = 110_000
+    withdrawal: float = 120_000 # Gross income (before tax)
+    withdrawal_negative_year: float = 110_000 # Gross income (before tax)
     social_security_money: float = 50_000
     years_without_social_security: int = 20
     wife_years_with_supplemental_income: int = 12 # 12 = 50 years old for Melodie
-    wife_supplemental_income: float = 60_000 
+    wife_supplemental_income: float = 60_000 # Gross income (before tax)
     me_years_with_supplemental_income: int = 0
     me_supplemental_income: float = 0
     annual_expense_ratio: float = 0.0
