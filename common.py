@@ -66,6 +66,7 @@ class SimulationData:
         bond_rate: Optional[float] = None,
         annual_expense_ratio: float = 0.0,
         overlapping_windows_note: Optional[str] = None,
+        minimum_balances: Optional[np.ndarray] = None,
     ):
         self.initial_balance = initial_balance
         self.withdrawal = withdrawal
@@ -85,6 +86,7 @@ class SimulationData:
         self.bond_rate = bond_rate
         self.annual_expense_ratio = annual_expense_ratio
         self.overlapping_windows_note = overlapping_windows_note
+        self.minimum_balances = minimum_balances
 
         successes_arr = final_balances > 0
         self.success_count = int(np.sum(successes_arr))
@@ -104,6 +106,11 @@ class SimulationData:
         self.probability_below_reserve_floor: Optional[float] = (
             float(np.mean(final_balances < float(reserve_floor)))
             if reserve_floor is not None
+            else None
+        )
+        self.probability_ever_below_reserve_floor: Optional[float] = (
+            float(np.mean(minimum_balances < float(reserve_floor)))
+            if reserve_floor is not None and minimum_balances is not None
             else None
         )
 
@@ -261,9 +268,14 @@ class SimulationData:
         )
         if self.reserve_floor is not None and self.probability_below_reserve_floor is not None:
             print(
-                f"  P(ending balance < reserve floor ${self.reserve_floor:,.0f}): "
+                f"  P(ENDING balance < reserve floor ${self.reserve_floor:,.0f}): "
                 f"{self.probability_below_reserve_floor:.2%}"
             )
+            if self.probability_ever_below_reserve_floor is not None:
+                print(
+                    f"  P(balance EVER fell below reserve floor ${self.reserve_floor:,.0f}): "
+                    f"{self.probability_ever_below_reserve_floor:.2%}"
+                )
         print(
             "  Timestep: annual; no intra-year path; US Shiller-based returns; "
             "see run_simulation_mp docstring for full list."
@@ -757,7 +769,7 @@ def _init_worker(
 def _simulate_chunk(args):
     """
     Worker: simulate `chunk_size` independent simulations.
-    Returns final_balances and (optionally) trajectories.
+    Returns final_balances, minimum_balances, and (optionally) trajectories.
 
     args: (chunk_size, seed, return_trajectories_bool)
     """
@@ -795,6 +807,7 @@ def _simulate_chunk(args):
 
     # Initialize balances and optional trajectories
     balances = np.full(chunk_size, _INITIAL_BALANCE, dtype=np.float64)
+    minimum_balances = balances.copy()
     if return_traj:
         trajectories = np.zeros((chunk_size, _N_YEARS + 1), dtype=np.float64)
         trajectories[:, 0] = _INITIAL_BALANCE
@@ -889,12 +902,13 @@ def _simulate_chunk(args):
 
         # Apply floor at zero
         np.maximum(balances, 0.0, out=balances)
+        np.minimum(minimum_balances, balances, out=minimum_balances)
 
         if return_traj:
             trajectories[:, t + 1] = balances
         prev_portfolio_return = portfolio_return
 
-    return balances, trajectories
+    return balances, minimum_balances, trajectories
 
 
 
@@ -1208,14 +1222,17 @@ def run_simulation_mp(
 
     # Combine results
     final_balances_list = []
+    minimum_balances_list = []
     if return_trajectories:
         traj_list = []
-    for balances, traj in results:
+    for balances, minimum_balances, traj in results:
         final_balances_list.append(balances)
+        minimum_balances_list.append(minimum_balances)
         if return_trajectories:
             traj_list.append(traj)
 
     final_balances = np.concatenate(final_balances_list)
+    minimum_balances = np.concatenate(minimum_balances_list)
     if return_trajectories:
         trajectories = np.concatenate(traj_list, axis=0)
     else:
@@ -1223,6 +1240,7 @@ def run_simulation_mp(
 
     # If you produced more sims due to chunking rounding, trim to n_sims
     final_balances = final_balances[:n_sims]
+    minimum_balances = minimum_balances[:n_sims]
     if return_trajectories and trajectories is not None:
         trajectories = trajectories[:n_sims]
 
@@ -1251,6 +1269,7 @@ def run_simulation_mp(
         bond_rate=bond_rate,
         annual_expense_ratio=annual_expense_ratio,
         overlapping_windows_note=None,
+        minimum_balances=minimum_balances,
     )
 
 

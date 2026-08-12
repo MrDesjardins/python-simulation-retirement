@@ -45,7 +45,13 @@ def _required_sims_for_half_width(
         raise ValueError(f"probability must be in [0, 1], got {probability}")
     if half_width <= 0.0:
         raise ValueError(f"half_width must be > 0, got {half_width}")
-    return max(1, ceil(probability * (1.0 - probability) * (z / half_width) ** 2))
+    # At an observed rate of exactly 0% or 100%, the plug-in variance is zero,
+    # but that does not mean the underlying probability is known exactly. Use
+    # the conservative Bernoulli variance maximum for planning in that case.
+    variance = probability * (1.0 - probability)
+    if variance == 0.0:
+        variance = 0.25
+    return max(1, ceil(variance * (z / half_width) ** 2))
 
 
 def _print_simulation_coverage(
@@ -83,10 +89,28 @@ def _print_simulation_coverage(
         f"  95% uncertainty around P(success): "
         f"±{half_width_95 * 100:.4f} percentage points"
     )
-    print("  Approximate N_SIMS needed at this observed rate:")
+    print("\n  Monte Carlo precision check:")
     for target in (0.01, 0.005, 0.001):
         required = _required_sims_for_half_width(probability, target)
-        print(f"    ±{target * 100:.1f} pp (95%): {required:,}")
+        comparison = "enough" if n_sims >= required else "increase needed"
+        print(
+            f"    For ±{target * 100:.1f} percentage points (95%): "
+            f"about {required:,} paths ({comparison})"
+        )
+
+    finest_target = 0.001
+    finest_required = _required_sims_for_half_width(probability, finest_target)
+    if n_sims >= finest_required:
+        print(
+            f"  Recommendation: do NOT increase N_SIMS for numerical precision. "
+            f"Your {n_sims:,} paths exceed the estimate for ±{finest_target * 100:.1f} "
+            "percentage-point precision."
+        )
+    else:
+        print(
+            f"  Recommendation: increase N_SIMS if you want ±{finest_target * 100:.1f} "
+            f"percentage-point precision; the estimate is {finest_required:,} paths."
+        )
 
     expected_failures = n_sims * (1.0 - probability)
     if expected_failures < 100:
@@ -95,15 +119,57 @@ def _print_simulation_coverage(
             "tail estimates may be unstable even with a small CI."
         )
     print(
-        "  Interpretation: N_SIMS improves Monte Carlo precision. It does not create "
-        "new historical regimes; block size, horizon, sampling mode, and the source "
-        "history determine scenario diversity."
+        "  Important: this is not a percentage of all possible futures. N_SIMS only "
+        "reduces random measurement noise within this model. It cannot tell us that "
+        "98% of real-world possibilities have been covered. Scenario uncertainty "
+        "comes from the historical data, block size, inflation assumptions, and "
+        "other model choices."
+    )
+
+
+def _print_plain_language_result(simulation_data: SimulationData) -> None:
+    """Print the decision metrics without relying on retirement jargon."""
+    print("\n--- What does this result mean? ---")
+    print(
+        "Success means the portfolio still has money at the end of the "
+        f"{simulation_data.n_years}-year retirement. It does not mean the "
+        "balance stayed comfortably high."
+    )
+    print(
+        f"  Portfolio still had money at the end: "
+        f"{simulation_data.probability_of_success:.2%}"
+    )
+    print(
+        "  Portfolio ran out of money before the end: "
+        f"{1.0 - simulation_data.probability_of_success:.2%}"
+    )
+
+    floor = simulation_data.reserve_floor
+    ever_below_floor = simulation_data.probability_ever_below_reserve_floor
+    if floor is None or ever_below_floor is None:
+        print("  Minimum-balance safety check: not configured")
+        return
+
+    print(
+        f"  Reserve floor: ${floor:,.0f} minimum balance target "
+        "(a safety cushion, not an additional withdrawal)"
+    )
+    print(
+        f"  Fell below that safety cushion at any time: {ever_below_floor:.2%}"
+    )
+    print(
+        f"  Stayed at or above that safety cushion throughout: "
+        f"{1.0 - ever_below_floor:.2%}"
+    )
+    print(
+        "  Use the last metric for a more conservative interpretation of "
+        "retirement safety; use the first metric for simple portfolio survival."
     )
 
 
 def main() -> None:
     cfg = BASELINE_SUCCESS_SCRIPT
-    n_sims = _env_int("N_SIMS", 25_000_000)
+    n_sims = _env_int("N_SIMS", 5_000_000)
     cap = _env_int("HIST_CAP", 100_000_000)
     bin_width = _env_int("HIST_BIN_WIDTH", 1_000_000)
     show_plot = _env_flag("SHOW_PLOT", True)
@@ -135,6 +201,7 @@ def main() -> None:
         print(line)
     print(f"Total simulation time: {end_time - start_time:.2f} seconds")
     simulation_data.print_stats()
+    _print_plain_language_result(simulation_data)
 
     final_balances = simulation_data.final_balances
     n_sims_run = simulation_data.n_sims
@@ -155,7 +222,7 @@ def main() -> None:
 
     plt.figure(figsize=(16, 8))
 
-    plt.hist(normal, bins=bins, edgecolor="black")
+    plt.hist(normal, bins=bins, edgecolor="black", label="Ending balance > $0")
 
     if len(underflow) > 0:
         plt.bar(

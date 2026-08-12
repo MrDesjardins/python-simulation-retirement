@@ -34,7 +34,7 @@ class BaselineSuccessScriptConfig:
     """Canonical parameters for `01_success.py` and matching historical checks."""
 
     n_years: int = 45
-    initial_balance: float = 4_300_000 # This is the money we need and then think to add more to buy a house (500k more)
+    initial_balance: float = 4_500_000 # This is the money we need and then think to add more to buy a house (500k more)
     sampling_mode: SamplingMode = "block_bootstrap"
     block_bootstrap_size: int = 5
     sp500_percentage: float = 0.70
@@ -45,12 +45,12 @@ class BaselineSuccessScriptConfig:
     withdrawal_negative_year: float = 110_000
     social_security_money: float = 50_000
     years_without_social_security: int = 20
-    wife_years_with_supplemental_income: int = 12
-    wife_supplemental_income: float = 50_000 # 50k is 4,166$ before tax, after income tax it is about 3,500$ per month
+    wife_years_with_supplemental_income: int = 12 # 12 = 50 years old for Melodie
+    wife_supplemental_income: float = 60_000 
     me_years_with_supplemental_income: int = 0
     me_supplemental_income: float = 0
     annual_expense_ratio: float = 0.0
-    reserve_floor: Optional[float] = 250_000
+    reserve_floor: Optional[float] = 500_000
 
     def run_simulation_mp_kwargs(self) -> dict[str, Any]:
         return {
