@@ -1,12 +1,13 @@
 import os
 import time
+from math import ceil
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
-from common import format_withdrawal_breakdown, run_simulation_mp
+from common import SimulationData, format_withdrawal_breakdown, run_simulation_mp
 from simulation_scenario import BASELINE_SUCCESS_SCRIPT, format_config_lines
 
 # Sampling mode for historical returns (overrides baseline if changed):
@@ -36,9 +37,73 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _required_sims_for_half_width(
+    probability: float, half_width: float, z: float = 1.96
+) -> int:
+    """Approximate simulations needed for a confidence-interval half-width."""
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError(f"probability must be in [0, 1], got {probability}")
+    if half_width <= 0.0:
+        raise ValueError(f"half_width must be > 0, got {half_width}")
+    return max(1, ceil(probability * (1.0 - probability) * (z / half_width) ** 2))
+
+
+def _print_simulation_coverage(
+    simulation_data: SimulationData,
+    *,
+    n_sims: int,
+    sampling_mode: str,
+    block_size: int,
+) -> None:
+    """Print Monte Carlo precision and historical-scenario coverage guidance."""
+    probability = simulation_data.probability_of_success
+    half_width_95 = (
+        simulation_data.wilson_success_95[1] - simulation_data.wilson_success_95[0]
+    ) / 2
+    n_years = simulation_data.n_years
+    total_years = simulation_data.total_years
+    print("\n--- Simulation coverage / precision ---")
+    print(
+        f"  Monte Carlo paths: {n_sims:,} "
+        f"({n_sims * n_years:,} simulated retirement-years)"
+    )
+    print(f"  Historical return years available: {total_years:,}")
+    print(f"  Horizon: {n_years} years; sampling mode: {sampling_mode}")
+    if sampling_mode == "block_bootstrap":
+        blocks_per_path = ceil(n_years / block_size)
+        print(
+            f"  Block bootstrap: {block_size}-year blocks "
+            f"({blocks_per_path} blocks/path)"
+        )
+    print(
+        f"  Observed outcomes: {simulation_data.success_count:,} successes, "
+        f"{n_sims - simulation_data.success_count:,} failures"
+    )
+    print(
+        f"  95% uncertainty around P(success): "
+        f"±{half_width_95 * 100:.4f} percentage points"
+    )
+    print("  Approximate N_SIMS needed at this observed rate:")
+    for target in (0.01, 0.005, 0.001):
+        required = _required_sims_for_half_width(probability, target)
+        print(f"    ±{target * 100:.1f} pp (95%): {required:,}")
+
+    expected_failures = n_sims * (1.0 - probability)
+    if expected_failures < 100:
+        print(
+            f"  Warning: only about {expected_failures:.1f} failures are represented; "
+            "tail estimates may be unstable even with a small CI."
+        )
+    print(
+        "  Interpretation: N_SIMS improves Monte Carlo precision. It does not create "
+        "new historical regimes; block size, horizon, sampling mode, and the source "
+        "history determine scenario diversity."
+    )
+
+
 def main() -> None:
     cfg = BASELINE_SUCCESS_SCRIPT
-    n_sims = _env_int("N_SIMS", 5_000_000)
+    n_sims = _env_int("N_SIMS", 25_000_000)
     cap = _env_int("HIST_CAP", 100_000_000)
     bin_width = _env_int("HIST_BIN_WIDTH", 1_000_000)
     show_plot = _env_flag("SHOW_PLOT", True)
@@ -74,6 +139,13 @@ def main() -> None:
     final_balances = simulation_data.final_balances
     n_sims_run = simulation_data.n_sims
     n_years = simulation_data.n_years
+
+    _print_simulation_coverage(
+        simulation_data,
+        n_sims=n_sims_run,
+        sampling_mode=SAMPLING_MODE,
+        block_size=cfg.block_bootstrap_size,
+    )
 
     underflow = final_balances[final_balances <= 0]
     normal = final_balances[(final_balances > 0) & (final_balances <= cap)]
